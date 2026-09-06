@@ -140,11 +140,15 @@ export async function DELETE(req: NextRequest) {
     const values = await getCredentialValues(serviceId)
     await deleteCredential(serviceId)
 
-    // remove the env-var backup too (otherwise cold start would re-import it)
+    // Remove the env-var backup too. Always attempt every env var mapped to
+    // this service — on serverless, the request may land on an instance whose
+    // ephemeral database never saw the row, so we cannot rely on stored values
+    // to know which vars were synced. (removeEnvVar is a no-op when absent.)
     const removedVars: string[] = []
     if (isEnvSyncAvailable()) {
       for (const f of svc.fields) {
-        if (!values[f.id]) continue
+        const hadValue = Boolean(values[f.id]) || f.envVars.some((ev) => process.env[ev])
+        if (!hadValue) continue
         for (const ev of f.envVars) {
           if (await removeEnvVar(ev)) removedVars.push(ev)
         }

@@ -24,6 +24,10 @@ function projectId(): string {
   )
 }
 
+function projectName(): string {
+  return process.env.VERCEL_PROJECT_NAME?.trim() || 'organic-growth-os'
+}
+
 async function vercelApi(path: string, init: RequestInit = {}, timeoutMs = 12_000): Promise<null | Response> {
   const token = process.env.VERCEL_TOKEN!.trim()
   const controller = new AbortController()
@@ -97,30 +101,24 @@ export async function removeEnvVar(key: string): Promise<boolean> {
   return false
 }
 
-/** Trigger a production redeploy so new env vars take effect. Cooldown: 5 minutes. */
+/** Trigger a production rebuild from the main branch so new env vars go live. Cooldown: 5 minutes. */
 export async function triggerRedeploy(force = false): Promise<{ triggered: boolean; reason: string }> {
   if (!force && Date.now() - lastRedeployAt < REDEPLOY_COOLDOWN_MS) {
     return { triggered: false, reason: 'cooldown' }
   }
-  const list = await vercelApi(`/v6/deployments?projectId=${projectId()}&limit=1&target=production&state=READY`)
-  if (!list || !list.ok) {
-    return { triggered: false, reason: `list failed (${list ? list.status : 'no response'})` }
+  const repoId = Number(process.env.VERCEL_GIT_REPO_ID?.trim() || process.env.GITHUB_REPO_ID?.trim() || 0)
+  if (!repoId) {
+    return { triggered: false, reason: 'unknown GitHub repo id (set GITHUB_REPO_ID env var)' }
   }
-  try {
-    const data = await list.json()
-    const uid = (data.deployments || [])[0]?.uid
-    if (!uid) return { triggered: false, reason: 'no ready production deployment found' }
-    const res = await vercelApi(
-      `/v13/deployments/${uid}/redeploy?target=production&forceNewDeployment=1`,
-      { method: 'POST', body: JSON.stringify({}) },
-      20_000,
-    )
-    if (res && res.ok) {
-      lastRedeployAt = Date.now()
-      return { triggered: true, reason: `redeploying ${uid}` }
-    }
-    return { triggered: false, reason: `redeploy failed (${res ? res.status : 'no response'})` }
-  } catch (e) {
-    return { triggered: false, reason: e instanceof Error ? e.message : String(e) }
+  const body = JSON.stringify({
+    name: projectName(),
+    target: 'production',
+    gitSource: { type: 'github', repoId, ref: process.env.VERCEL_GIT_COMMIT_REF?.trim() || 'main' },
+  })
+  const res = await vercelApi('/v13/deployments?skipAutoDetectionConfirmation=1', { method: 'POST', body }, 25_000)
+  if (res && res.ok) {
+    lastRedeployAt = Date.now()
+    return { triggered: true, reason: 'production rebuild started from main' }
   }
+  return { triggered: false, reason: `deployment creation failed (${res ? res.status : 'no response'})` }
 }
