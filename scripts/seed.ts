@@ -407,7 +407,7 @@ async function main() {
   // ============================================================
   // INTEGRATIONS — the 13-connection checklist
   // ============================================================
-  const integrationSeeds: Array<[number, string, string, string, string, string, string, string]> = [
+  const integrationSeeds: Array<[number, string, string, string, string, string, string]> = [
     [1, 'Supabase (Postgres)', 'DATABASE', 'Permanent OS database & persistent memory. Brand isolation via brand_id on every table.', 'SHARED', 'CONNECTED', 'https://supabase.com/docs'],
     [2, 'DataForSEO MCP', 'INTELLIGENCE', 'SERPs, keywords, competitors, backlinks, technical audits, AI data. Official Claude Code MCP server.', 'SHARED', 'CONNECTED', 'https://docs.dataforseo.com'],
     [3, 'Activepieces', 'AUTOMATION', '24/7 scheduler & orchestration layer. Runs the 16 OS flows even when laptop is off.', 'SHARED', 'CONNECTED', 'https://activepieces.com/docs'],
@@ -501,7 +501,32 @@ async function main() {
     })
   }
 
+// ============================================================
+  // GROWTH AGENT TASKS — the assistant's task queue
+  // ============================================================
+  const taskSeeds: Array<[string, string, string, string, string, string]> = [
+    ['Audit product page Core Web Vitals', 'Check LCP/CLS/INP on top 5 Shopify product pages and queue fixes above the fold.', 'AUDIT', 'HIGH', 'DONE', '3 pages improved (LCP 3.1s to 1.9s). 1 image lazy-load fix pending review.'],
+    ['Refresh "B12 for Vegetarians" article', 'Position 8 with rising CTR. Add FAQ block, update 2026 stats, strengthen internal links to B12 product page.', 'CONTENT', 'HIGH', 'DONE', 'Refreshed and republished. Position 8 to 5 after 9 days. +142 organic clicks/week.'],
+    ['Find 10 unlinked brand mentions', 'Scan for Holy Strips mentions without links; prepare reclamation emails (22% historical conversion).', 'AUTHORITY', 'MEDIUM', 'RUNNING', '9 mentions found so far, 4 emails drafted.'],
+    ['Track 5 new GEO prompts', 'Add conversational buyer prompts to the AI visibility tracker (Perplexity + ChatGPT weekly check).', 'GEO', 'MEDIUM', 'QUEUED', ''],
+    ['Research keyword gap vs top competitor', 'Compare keyword universe against the market leader in dissolvable supplements; find low-difficulty opportunities.', 'KEYWORD_RESEARCH', 'MEDIUM', 'QUEUED', ''],
+    ['Draft outreach for supplementreviewer.io', 'Roundup inclusion pitch with lab COA attached. Day-1 email ready for review.', 'OUTREACH', 'LOW', 'QUEUED', ''],
+  ]
+  for (const [title, description, type, priority, status, result] of taskSeeds) {
+    await db.task.create({
+      data: {
+        brandId: holyStrips.id,
+        title, description, type, priority, status, result,
+        source: status === 'QUEUED' ? 'ASSISTANT' : 'DAILY_LOOP',
+        autonomy: 'GREEN',
+        createdAt: daysAgo(randInt(0, 6)),
+        completedAt: status === 'DONE' ? daysAgo(randInt(0, 3)) : null,
+      },
+    })
+  }
+
   console.log('Seed complete:')
+
   console.log('  Brands:', await db.brand.count())
   console.log('  Keywords:', await db.keyword.count())
   console.log('  Opportunities:', await db.opportunity.count())
@@ -514,6 +539,7 @@ async function main() {
   console.log('  Integrations:', await db.integration.count())
   console.log('  Backlinks:', await db.backlinkRecord.count())
   console.log('  Events:', await db.systemEvent.count())
+  console.log('  Tasks:', await db.task.count())
 }
 
 main()

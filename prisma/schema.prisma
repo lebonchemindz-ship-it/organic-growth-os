@@ -46,6 +46,30 @@ model Brand {
   events          SystemEvent[]
   backlinkRecords BacklinkRecord[]
   integrations    Integration[]
+  tasks           Task[]
+}
+
+// ============================================================
+// GROWTH AGENT — task queue executed by the AI assistant
+// ============================================================
+
+model Task {
+  id          String    @id @default(cuid())
+  brandId     String
+  title       String
+  description String    @default("")
+  type        String    @default("GROWTH") // KEYWORD_RESEARCH | CONTENT | OUTREACH | AUDIT | GEO | AUTHORITY | GROWTH
+  priority    String    @default("MEDIUM") // HIGH | MEDIUM | LOW
+  autonomy    String    @default("GREEN")  // GREEN | YELLOW | RED
+  status      String    @default("QUEUED") // QUEUED | RUNNING | DONE | FAILED
+  source      String    @default("ASSISTANT") // ASSISTANT | DAILY_LOOP | OWNER
+  result      String    @default("")
+  scheduledFor DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
 }
 
 // ============================================================

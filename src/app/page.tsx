@@ -23,6 +23,7 @@ import { ReportsView } from '@/components/organic/reports'
 import { MasterPromptView } from '@/components/organic/master-prompt-view'
 import { ApisView } from '@/components/organic/apis-view'
 import { useApiData } from '@/components/organic/shared'
+import { AssistantPanel } from '@/components/organic/assistant-panel'
 
 type SectionId =
   | 'dashboard' | 'opportunities' | 'keywords' | 'content' | 'outreach'
@@ -240,6 +241,9 @@ export default function Home() {
             {section === 'apis' && <ApisView />}
           </div>
         </main>
+
+        {/* Sprout — the AI growth agent (floating) */}
+        <AssistantPanel brandSlug={brandSlug} />
 
         {/* Footer */}
         <footer className="mt-auto border-t border-border bg-background px-4 py-4 sm:px-6">

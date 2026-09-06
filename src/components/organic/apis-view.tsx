@@ -153,6 +153,18 @@ const APIS: ApiSpec[] = [
     icon: <Zap className="h-5 w-5" />,
     priority: 2,
   },
+  {
+    name: 'OpenSEO (open-seo)',
+    role: 'All-in-one SEO toolbox · alternative',
+    purpose: 'Open-source alternative to Semrush/Ahrefs (github.com/every-app/open-seo). Exposes keyword research, rank tracking, competitor insights, backlinks, site audits and AI visibility through an MCP server that agents (Claude Code, the Sprout chatbot) can call directly. Bring your own DataForSEO key — pay-as-you-go. Use it as the OS SEO-data brain instead of wiring DataForSEO endpoints yourself, or self-host on Cloudflare/Docker.',
+    authType: 'API key (hosted) or self-hosted MCP endpoint',
+    envVars: ['OPENSEO_API_KEY', 'OPENSEO_MCP_URL'],
+    pricing: 'Hosted $10/mo · self-hosted free + DataForSEO usage',
+    docsUrl: 'https://github.com/every-app/open-seo',
+    layer: 'Layer 2 — Intelligence (optional)',
+    icon: <Globe className="h-5 w-5" />,
+    priority: 3,
+  },
 ]
 
 const PRIORITY_LABELS: Record<number, { label: string; cls: string }> = {
@@ -179,7 +191,7 @@ export function ApisView() {
     <div className="space-y-5">
       <SectionHeader
         title="APIs & Credentials Required"
-        description="Every external system the Organic Growth OS needs to run for real. Connect in priority order — one connection at a time, tested before continuing. All keys live in environment variables, never in code."
+        description="Every external system the Organic Growth OS needs to run for real. Connect in priority order — one connection at a time, tested before continuing. All keys live in environment variables, never in code. The Sprout agent (bottom-right) already understands this stack."
         actions={
           <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
             <DollarSign className="h-3 w-3" /> {totalMonthly}
@@ -212,6 +224,10 @@ DATAFORSEO_PASSWORD=
 ACTIVEPIECES_API_KEY=
 HUNTER_API_KEY=
 RECRAFT_API_KEY=
+
+# Optional — OpenSEO as the all-in-one SEO data brain
+OPENSEO_API_KEY=
+OPENSEO_MCP_URL=
 
 # Per-brand (repeat per brand)
 GSC_SITE_URL=            GA4_PROPERTY_ID=

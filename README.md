@@ -26,6 +26,7 @@ This dashboard mirrors the full architecture designed in the original Organic Gr
 
 ### Core concepts implemented
 
+- **Sprout — the AI Growth Agent** 🤖 — a floating chat agent (bottom-right) that you can actually give tasks to. It reads live system state, runs site audits, queues tasks on the task board, creates content briefs, adds keywords and executes approval decisions — in any language you write (Arabic included). See below.
 - **Decision & Autonomy Engine** — every opportunity scored by `VALUE = Impact × Probability × Confidence × Strategic Value × Urgency` (effort-adjusted)
 - **Autonomy levels** — 🟢 GREEN executes automatically · 🟡 YELLOW executes at 85%+ confidence · 🔴 RED waits in the Owner Approval Queue **without stopping anything else**
 - **Keyword universe** — GSC + DataForSEO + AI query patterns, positions 4-20 prioritized (the refresh sweet spot)
@@ -33,6 +34,22 @@ This dashboard mirrors the full architecture designed in the original Organic Gr
 - **Outreach engine** — publisher qualification (min 70/100), 30 contacts/day cap, Day 1 / Day 5 / Day 12 sequences, never spam
 - **GEO engine** — brand mention tracking across ChatGPT, Gemini, Perplexity, Claude and Copilot
 - **Weekly Owner Report** — one report with a verdict: `YES — strong evidence`, `YES — early positive`, `TOO EARLY`, `MIXED`, or `NO — change required`
+
+---
+
+## 🤖 Sprout — the AI Growth Agent (chatbot)
+
+An agentic assistant embedded in the dashboard. It is **not** a search box — it is an operator with 15 executable tools:
+
+| Category | Tools |
+|---|---|
+| Read state | `get_overview` · `list_keywords` · `list_opportunities` · `list_content` · `outreach_status` · `ai_visibility` · `list_approvals` · `latest_weekly_report` |
+| Do work | `create_task` · `update_task` · `add_keywords` · `create_content_brief` · `run_site_audit` · `decide_approval` |
+| Task board | persistent Task table + `/api/tasks` (GET/PATCH) — every action it takes is logged in the brand activity feed |
+
+**How it works:** server-side agent loop (`POST /api/assistant`) — the LLM replies with either a tool call or a final answer (JSON protocol); the server executes tools against the database and loops (max 6 steps) until the answer is composed. Every write is branded, permission-checked and logged as a SystemEvent.
+
+**Providers (in order):** `ANTHROPIC_API_KEY` (recommended) → `OPENAI_API_KEY` → sandbox SDK. Without a key the agent runs in an honest **offline mode**: it still executes system commands (overview, keywords, opportunities, audits) via deterministic parsing and tells you how to enable full intelligence. The toolset mirrors the [OpenSEO](https://github.com/every-app/open-seo) MCP categories (keyword research, rank tracking, backlinks, site audit, AI visibility) — connect OpenSEO or DataForSEO to swap simulated data for live SEO data.
 
 ---
 
@@ -77,6 +94,8 @@ bun run scripts/seed.ts
 | `GET /api/reports?brand=` | Weekly reports + archive |
 | `GET /api/integrations` | The 13-connection checklist |
 | `GET /api/master-prompt` | The full CLAUDE.md OS prompt + brand activation prompt |
+| `POST /api/assistant` | **Sprout agent** — chat + tool execution loop |
+| `GET /api/tasks?brand=` · `PATCH /api/tasks` | **Task board** — the agent's persistent task queue |
 | `GET /api/health` | Liveness + database check |
 
 ---
@@ -123,11 +142,13 @@ Never: fabricate reviews · impersonate customers · manufacture Reddit conversa
 ## Project structure
 
 ```
-prisma/schema.prisma          # Full OS data model (12 tables, brand_id isolation)
+prisma/schema.prisma          # Full OS data model (13 tables, brand_id isolation)
 scripts/seed.ts               # Deterministic demo data
-src/app/page.tsx              # Single-page dashboard shell (12 sections)
-src/app/api/*                 # 12 REST endpoints
-src/components/organic/*      # Section components
+src/app/page.tsx              # Single-page dashboard shell (12 sections + agent)
+src/app/api/*                 # 14 REST endpoints (incl. assistant + tasks)
+src/components/organic/*      # Section components + assistant-panel.tsx
+src/lib/assistant/llm.ts      # LLM provider chain (Anthropic → OpenAI → sandbox)
+src/lib/assistant/tools.ts    # 15 agent tools (read state + do work)
 src/lib/seed-app.ts           # Reusable seed (auto-seed on cold start)
 src/lib/ensure-seed.ts        # Empty-database detection
 ```

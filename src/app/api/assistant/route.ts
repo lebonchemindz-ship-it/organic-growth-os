@@ -1,0 +1,246 @@
+// ============================================================
+// GROWTH AGENT (Sprout) — POST /api/assistant
+// Agentic JSON protocol: the LLM answers either with a tool call
+// or a final message; the server executes tools against the DB
+// and loops until the final answer (max 6 steps).
+// Falls back to a deterministic offline responder when no LLM
+// provider is configured (e.g. Vercel without keys).
+// ============================================================
+
+import { NextRequest, NextResponse } from 'next/server'
+import { db } from '@/lib/db'
+import { ensureSeeded } from '@/lib/ensure-seed'
+import { llmComplete } from '@/lib/assistant/llm'
+import { executeTool, toolSpecPrompt, type ToolContext } from '@/lib/assistant/tools'
+
+export const dynamic = 'force-dynamic'
+export const maxDuration = 120
+
+interface IncomingMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+interface ExecutedTool {
+  name: string
+  args: Record<string, unknown>
+  summary: string
+  ok: boolean
+}
+
+const MAX_STEPS = 6
+
+function buildSystemPrompt(ctx: ToolContext, brand: { positioning: string; voice: string; approvedClaims: string; restrictedClaims: string; industry: string }): string {
+  return `You are Sprout — the AI growth agent embedded in the Organic Growth OS dashboard.
+You operate the growth machine for the brand "${ctx.brandName}" (${ctx.brandDomain}, industry: ${brand.industry}).
+Positioning: ${brand.positioning || 'n/a'}. Voice: ${brand.voice || 'n/a'}.
+Approved claims: ${brand.approvedClaims || 'n/a'}. Restricted claims: ${brand.restrictedClaims || 'n/a'}.
+
+YOUR JOB: answer questions AND take action. You are an operator, not a search box — when the user
+asks for growth work, use the tools to read live system state and to queue/execute work
+(tasks, keyword additions, content briefs, audits, approval decisions).
+
+AVAILABLE TOOLS:
+${toolSpecPrompt()}
+
+PROTOCOL — reply with ONE JSON object and nothing else (no markdown fences, no prose outside JSON):
+1. To call a tool: {"action":"tool","tool":"<tool_name>","args":{...}}
+2. When you have enough information to answer the user: {"action":"final","message":"<your answer>"}
+
+RULES:
+- Chain tools when useful (e.g. get_overview then list_opportunities) but at most ${MAX_STEPS} calls per turn.
+- For decisions that materially change direction (spending, risky claims, link purchases), tell the user
+  what you recommend and note that RED items live in the Owner Approval Queue — never fake an owner decision.
+- Never invent statistics that are not in tool results. If numbers are asked for, call a tool.
+- All dashboard metrics are DEMO DATA (simulated, not real measurements) — say so honestly when the user
+  asks about data authenticity, and mention that connecting the real APIs makes them live.
+- Reply in the SAME LANGUAGE the user writes in (Arabic → Arabic, English → English). Keep UI terms in English.
+- Be concise and structured: short paragraphs, bullet lists, bold key numbers.
+- If the user asks something outside SEO/growth for the brand, briefly steer back to what you can operate.`
+}
+
+function extractJson(text: string): { action: string; tool?: string; args?: Record<string, unknown>; message?: string } | null {
+  let t = text.trim()
+  t = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
+  const start = t.indexOf('{')
+  const end = t.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) return null
+  try {
+    return JSON.parse(t.slice(start, end + 1))
+  } catch {
+    return null
+  }
+}
+
+// ---------- deterministic offline responder (no LLM key configured) ----------
+
+function fmtRows(rows: Array<Record<string, unknown>>, keys: string[]): string {
+  return rows.map(r => '• ' + keys.filter(k => r[k] !== undefined && r[k] !== null).map(k => `**${r[k]}**`).join(' · ')).join('\n')
+}
+
+async function offlineRespond(message: string, ctx: ToolContext): Promise<{ reply: string; tools: ExecutedTool[] }> {
+  const m = message.toLowerCase()
+  const tools: ExecutedTool[] = []
+  const run = async (name: string, args: Record<string, unknown> = {}) => {
+    const r = await executeTool(name, args, ctx)
+    tools.push({ name, args, summary: r.summary, ok: r.ok })
+    return r
+  }
+
+  const has = (...words: string[]) => words.some(w => m.includes(w))
+
+  if (has('overview', 'status', 'summary', 'how are', 'كيف', 'ملخص', 'حالة')) {
+    const r = await run('get_overview')
+    const d = r.data as Record<string, unknown>
+    const report = d.latestReport as Record<string, string> | null
+    return {
+      reply: `**${ctx.brandName} — overview (demo data)**\n• Keywords tracked: **${d.keywordsTracked}** (${d.keywordsTop10} in top 10)\n• Open opportunities: **${d.openOpportunities}**\n• Content: **${d.contentPublished}** published / ${d.contentTotal} total\n• Active referring domains: **${d.activeReferringDomains}**\n• AI mention rate: **~${d.aiMentionRateApprox}%**\n• Pending approvals: **${d.pendingApprovals}** · Open tasks: **${d.openTasks}**\n\n_Verdict (latest report): ${report?.verdict ?? 'n/a'}_`,
+      tools,
+    }
+  }
+  if (has('keyword', 'كلمة', 'كلمات')) {
+    const r = await run('list_keywords', { limit: 10 })
+    return { reply: `**Top tracked keywords (demo data)**\n${fmtRows(r.data as Array<Record<string, unknown>>, ['term', 'volume', 'position', 'intent'])}\n\nPosition = current rank (empty = not ranking yet).`, tools }
+  }
+  if (has('opportunit', 'فرص', 'أولويات')) {
+    const r = await run('list_opportunities', { limit: 8 })
+    return { reply: `**Top opportunities by VALUE score (demo data)**\n${fmtRows(r.data as Array<Record<string, unknown>>, ['title', 'score', 'autonomy', 'status'])}`, tools }
+  }
+  if (has('task', 'مهام', 'مهامي')) {
+    const r = await run('list_tasks', {})
+    return { reply: `**Task queue**\n${fmtRows(r.data as Array<Record<string, unknown>>, ['title', 'type', 'status', 'priority'])}`, tools }
+  }
+  if (has('audit', 'فحص', 'تدقيق')) {
+    const r = await run('run_site_audit')
+    const d = r.data as { findings: Array<{ check: string; status: string; detail: string }> }
+    return { reply: `**Site audit — ${ctx.brandDomain}** (simulated checks; real crawl when DataForSEO/OpenSEO is connected)\n${d.findings.map(f => `• ${f.status === 'PASS' ? '✅' : '⚠️'} **${f.check}** — ${f.detail}`).join('\n')}`, tools }
+  }
+  if (has('ai', 'visibility', 'chatgpt', 'perplexity', 'الذكاء')) {
+    const r = await run('ai_visibility')
+    return { reply: `**AI visibility (GEO) prompts**\n${fmtRows(r.data as Array<Record<string, unknown>>, ['prompt', 'chatgpt', 'perplexity', 'claude', 'competitor'])}\n(true = brand mentioned)`, tools }
+  }
+  return {
+    reply: `I'm Sprout, the growth agent for **${ctx.brandName}** — but I'm currently in **offline mode** (no AI provider key configured on this deployment).
+
+I can still run system commands for you right now — try:
+• "show me the overview" / "ملخص"
+• "list keywords" / "الكلمات"
+• "top opportunities" / "الفرص"
+• "run a site audit" / "فحص الموقع"
+
+**To unlock full intelligence** (analysis, planning, content briefs, task creation from natural language), set one of these environment variables in your Vercel project:
+\`\`\`
+ANTHROPIC_API_KEY=sk-ant-...   (recommended — Claude)
+OPENAI_API_KEY=sk-...           (alternative)
+\`\`\`
+See the "APIs Required" tab for details.`,
+    tools,
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    await ensureSeeded()
+    const body = await req.json().catch(() => ({}))
+    const incoming: IncomingMessage[] = Array.isArray(body.messages) ? body.messages : []
+    const brandSlug = String(body.brandSlug || 'holy_strips')
+    const userText = incoming.filter(m => m.role === 'user').slice(-1)[0]?.content || ''
+
+    const brand = await db.brand.findUnique({ where: { slug: brandSlug } })
+    if (!brand) {
+      return NextResponse.json({ error: 'Brand not found' }, { status: 404 })
+    }
+    const ctx: ToolContext = {
+      brandId: brand.id,
+      brandName: brand.name,
+      brandDomain: brand.domain,
+      brandSlug: brand.slug,
+    }
+
+    // ---------- agent loop (first call doubles as provider probe) ----------
+    const system = buildSystemPrompt(ctx, brand)
+    const history = incoming
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+      .slice(-12)
+      .map(m => ({ role: m.role, content: m.content.slice(0, 4000) }))
+
+    const convo: Array<{ role: 'user' | 'assistant'; content: string }> = [...history]
+    const executed: ExecutedTool[] = []
+    let provider: string | null = null
+    let llmAvailable = false
+
+    const forceFinal = async (): Promise<string> => {
+      const synth = `${system}\n\nCRITICAL: You have already executed your tool calls and their results are in the conversation. You MUST now reply with ONLY the final JSON object: {"action":"final","message":"<your answer>"}. Do NOT call any more tools. Compose the answer to the user now.`
+      try {
+        const r = await llmComplete(synth, convo)
+        if (!r) return ''
+        const parsed = extractJson(r.text)
+        provider = r.provider
+        if (parsed?.message) return String(parsed.message)
+        // model still tried a tool call — do not leak protocol JSON to the user
+        return ''
+      } catch {
+        return ''
+      }
+    }
+
+    let result = await llmComplete(system, convo)
+    if (result) llmAvailable = true
+
+    for (let step = 0; step < MAX_STEPS && result; step++) {
+      provider = result.provider
+      const parsed = extractJson(result.text)
+
+      if (parsed?.action === 'tool' && parsed.tool) {
+        const args = (parsed.args && typeof parsed.args === 'object' ? parsed.args : {}) as Record<string, unknown>
+        const toolResult = await executeTool(parsed.tool, args, ctx)
+        executed.push({ name: parsed.tool, args, summary: toolResult.summary, ok: toolResult.ok })
+        // feed result back
+        const stepsLeft = MAX_STEPS - step - 1
+        convo.push({ role: 'assistant', content: JSON.stringify({ action: 'tool', tool: parsed.tool, args }) })
+        convo.push({
+          role: 'user',
+          content: `TOOL_RESULT (${parsed.tool}) → ${JSON.stringify({ ok: toolResult.ok, summary: toolResult.summary, data: toolResult.data }).slice(0, 2500)}\n${stepsLeft <= 2 ? `NOTE: only ${stepsLeft} step(s) left — compose your final answer now using {"action":"final","message":"..."}. ` : ''}Continue with the protocol: another {"action":"tool",...} or {"action":"final","message":"..."}.`,
+        })
+        result = await llmComplete(system, convo)
+        continue
+      }
+
+      if (parsed?.action === 'final' && parsed.message) {
+        return NextResponse.json({ reply: String(parsed.message), tools: executed, provider })
+      }
+
+      // Non-JSON or malformed → treat as final answer text (graceful degradation)
+      const text = result.text.trim()
+      if (text && !text.startsWith('{"action"')) {
+        return NextResponse.json({ reply: text, tools: executed, provider })
+      }
+      result = await llmComplete(system, convo)
+    }
+
+    if (llmAvailable) {
+      // Step limit reached (or a step failed) — force a synthesis answer
+      const synthesis = await forceFinal()
+      if (synthesis) {
+        return NextResponse.json({ reply: synthesis, tools: executed, provider })
+      }
+      return NextResponse.json({
+        reply: executed.length
+          ? `I ran ${executed.length} tool ${executed.length === 1 ? 'call' : 'calls'}:\n${executed.map(t => `• **${t.name}** — ${t.summary}`).join('\n')}\n\n(The language provider throttled me before I could compose the full answer — ask me to continue.)`
+          : 'I could not complete that request — the AI provider is busy. Please try again in a moment.',
+        tools: executed,
+        provider,
+      })
+    }
+
+    // ---------- offline path (no LLM provider reachable) ----------
+    const offline = await offlineRespond(userText, ctx)
+    return NextResponse.json({ ...offline, provider: 'offline' })
+  } catch (e) {
+    console.error('[assistant] error:', e)
+    return NextResponse.json(
+      { reply: 'The agent hit an internal error. Try again in a moment.', tools: [], provider: 'error' },
+      { status: 200 },
+    )
+  }
+}

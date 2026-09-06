@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -40,6 +41,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local research/test artifacts
+openseo_readme.md
+scripts/test-llm.ts
+scripts/test-agent.ts
+scripts/patch-ddl.py
 local-*
 .claude
 .z-ai-config
