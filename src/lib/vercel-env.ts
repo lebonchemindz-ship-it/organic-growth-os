@@ -72,7 +72,7 @@ async function listEnvVars(): Promise<EnvRecord[]> {
 export async function upsertEnvVar(key: string, value: string, isSecret: boolean): Promise<boolean> {
   const existing = (await listEnvVars()).find((e) => e.key === key)
   const target = Array.from(new Set([...(existing?.target || ['production']), 'production', 'preview']))
-  const type = isSecret ? 'secret' : 'plain'
+  const type = isSecret ? 'sensitive' : 'plain'
   const body = JSON.stringify({ key, value, target, type })
 
   if (existing) {
