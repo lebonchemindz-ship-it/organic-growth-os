@@ -7,7 +7,7 @@ import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/s
 import {
   LayoutDashboard, Sparkles, Search, FileText, Users, Bot, ShieldAlert,
   Plug, Building2, FileBarChart, TerminalSquare, KeyRound, Menu, Sprout,
-  Activity, FlaskConical, X,
+  Activity, FlaskConical, X, ScrollText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { DashboardView } from '@/components/organic/dashboard'
@@ -22,12 +22,13 @@ import { BrandsView } from '@/components/organic/brands'
 import { ReportsView } from '@/components/organic/reports'
 import { MasterPromptView } from '@/components/organic/master-prompt-view'
 import { ApisView } from '@/components/organic/apis-view'
+import { ApiKeysView } from '@/components/organic/api-keys-view'
 import { useApiData } from '@/components/organic/shared'
 import { AssistantPanel } from '@/components/organic/assistant-panel'
 
 type SectionId =
   | 'dashboard' | 'opportunities' | 'keywords' | 'content' | 'outreach'
-  | 'ai' | 'approvals' | 'reports' | 'brands' | 'integrations' | 'master' | 'apis'
+  | 'ai' | 'approvals' | 'reports' | 'brands' | 'integrations' | 'master' | 'apis' | 'api-keys'
 
 const NAV: Array<{ group: string; items: Array<{ id: SectionId; label: string; icon: React.ReactNode }> }> = [
   {
@@ -51,10 +52,11 @@ const NAV: Array<{ group: string; items: Array<{ id: SectionId; label: string; i
   {
     group: 'System',
     items: [
+      { id: 'api-keys', label: 'API Keys', icon: <KeyRound className="h-4 w-4" /> },
       { id: 'brands', label: 'Brands', icon: <Building2 className="h-4 w-4" /> },
       { id: 'integrations', label: 'Integrations', icon: <Plug className="h-4 w-4" /> },
       { id: 'master', label: 'The OS — Prompt', icon: <TerminalSquare className="h-4 w-4" /> },
-      { id: 'apis', label: 'APIs Required', icon: <KeyRound className="h-4 w-4" /> },
+      { id: 'apis', label: 'APIs Required', icon: <ScrollText className="h-4 w-4" /> },
     ],
   },
 ]
@@ -72,6 +74,7 @@ const SECTION_META: Record<SectionId, { title: string; sub: string }> = {
   integrations: { title: 'Integrations', sub: 'The 13-connection checklist' },
   master: { title: 'The OS — Master Prompt', sub: 'Install once as CLAUDE.md' },
   apis: { title: 'APIs Required', sub: 'Everything you need to connect' },
+  'api-keys': { title: 'API Keys', sub: 'Save each service key once — stored permanently' },
 }
 
 interface BrandsListData {
@@ -135,7 +138,7 @@ export default function Home() {
           </span>
           <div>
             <p className="text-sm font-bold leading-tight text-sidebar-foreground">Organic Growth OS</p>
-            <p className="text-[10px] text-sidebar-foreground/50">v1.2 · autonomous growth machine</p>
+            <p className="text-[10px] text-sidebar-foreground/50">v1.3 · autonomous growth machine</p>
           </div>
         </div>
 
@@ -238,7 +241,8 @@ export default function Home() {
             {section === 'brands' && <BrandsView activeSlug={brandSlug} onSelect={setBrandSlug} />}
             {section === 'integrations' && <IntegrationsView />}
             {section === 'master' && <MasterPromptView />}
-            {section === 'apis' && <ApisView />}
+            {section === 'apis' && <ApisView onNavigate={navigate} />}
+            {section === 'api-keys' && <ApiKeysView />}
           </div>
         </main>
 

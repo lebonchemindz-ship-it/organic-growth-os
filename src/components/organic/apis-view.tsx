@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Search, ExternalLink, KeyRound, DollarSign, Brain, Database, Calendar, Mail, Palette, LineChart, ShoppingBag, Globe, Zap, ScrollText } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { SectionHeader } from './shared'
 
 interface ApiSpec {
@@ -173,7 +174,7 @@ const PRIORITY_LABELS: Record<number, { label: string; cls: string }> = {
   3: { label: 'Nice to have', cls: 'border-border text-muted-foreground' },
 }
 
-export function ApisView() {
+export function ApisView({ onNavigate }: { onNavigate?: (id: 'api-keys') => void }) {
   const [query, setQuery] = useState('')
 
   const filtered = APIS.filter(
@@ -191,13 +192,34 @@ export function ApisView() {
     <div className="space-y-5">
       <SectionHeader
         title="APIs & Credentials Required"
-        description="Every external system the Organic Growth OS needs to run for real. Connect in priority order — one connection at a time, tested before continuing. All keys live in environment variables, never in code. The Sprout agent (bottom-right) already understands this stack."
+        description="Every external system the Organic Growth OS needs to run for real. Connect in priority order — one connection at a time, tested before continuing. The Sprout agent (bottom-right) already understands this stack."
         actions={
           <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
             <DollarSign className="h-3 w-3" /> {totalMonthly}
           </Badge>
         }
       />
+
+      {/* Direct shortcut — save keys in the dashboard */}
+      <Card className="border-emerald-500/25 bg-emerald-500/5">
+        <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+              <KeyRound className="h-4.5 w-4.5" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-bold">You no longer need the terminal to add keys</p>
+              <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">
+                Paste each API key once in the <b>API Keys</b> tab — it is stored encrypted, backed up to the deployment
+                permanently, and the Sprout agent starts using it immediately.
+              </p>
+            </div>
+          </div>
+          <Button size="sm" className="h-9 shrink-0" onClick={() => onNavigate?.('api-keys')}>
+            <KeyRound className="h-4 w-4" /> Open API Keys
+          </Button>
+        </CardContent>
+      </Card>
 
       <div className="relative max-w-sm">
         <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

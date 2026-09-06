@@ -323,6 +323,22 @@ model BacklinkRecord {
 }
 
 // ============================================================
+// CREDENTIAL VAULT — API keys saved from the dashboard
+// Encrypted at rest (AES-256-GCM). Global across brands;
+// optionally synced to deployment env vars for durability.
+// ============================================================
+
+model Credential {
+  id        String   @id @default(cuid())
+  service   String   @unique // registry id, e.g. "anthropic"
+  label     String   @default("")
+  valuesEnc String   @default("") // encrypted JSON { fieldId: value }
+  source    String   @default("DASHBOARD") // DASHBOARD | ENV
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================
 // SYSTEM LOG — daily loop runs, errors, emergency alerts
 // ============================================================
 

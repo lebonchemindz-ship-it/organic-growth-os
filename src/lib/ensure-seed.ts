@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { seedDatabase } from '@/lib/seed-app'
 import { SCHEMA_DDL } from '@/lib/schema-ddl'
+import { importEnvCredentials } from '@/lib/credentials'
 
 let seeding: Promise<void> | null = null
 
@@ -8,6 +9,8 @@ let seeding: Promise<void> | null = null
  * Ensures the SQLite database has its schema (CREATE TABLE IF NOT EXISTS)
  * and demo data. Critical for ephemeral environments like Vercel serverless,
  * where a fresh /tmp database file is created on each cold start.
+ * Also re-imports credentials stored as deployment env vars into the
+ * credential vault so keys survive cold starts.
  */
 export async function ensureSeeded(): Promise<void> {
   if (seeding) return seeding
@@ -33,6 +36,13 @@ export async function ensureSeeded(): Promise<void> {
       }
     } catch (seedCheckErr) {
       console.error('[ensure-seed] seed check failed:', seedCheckErr)
+    }
+
+    // 3. Cold-start durability — pull env-var credentials into the vault
+    try {
+      await importEnvCredentials()
+    } catch (envImportErr) {
+      console.error('[ensure-seed] credential import failed:', envImportErr)
     }
   })().catch((e) => {
     seeding = null

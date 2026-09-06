@@ -1,8 +1,11 @@
 // ============================================================
 // LLM PROVIDER CHAIN — multi-provider chat completions
 // Order: Anthropic API → OpenAI API → z-ai-web-dev-sdk (sandbox)
-// Works server-side only.
+// Keys resolve from the Credential Vault (API Keys tab) first,
+// then from environment variables. Works server-side only.
 // ============================================================
+
+import { getCredentialValues } from '@/lib/credentials'
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
@@ -27,10 +30,12 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
   }
 }
 
-/** Anthropic Messages API — used when ANTHROPIC_API_KEY is set (recommended for production). */
+/** Anthropic Messages API — used when an Anthropic key is saved in the API Keys tab or set as an env var. */
 async function callAnthropic(system: string, messages: ChatMessage[]): Promise<LlmResult | null> {
-  const key = process.env.ANTHROPIC_API_KEY
+  const cred = await getCredentialValues('anthropic')
+  const key = cred.apiKey || process.env.ANTHROPIC_API_KEY || ''
   if (!key) return null
+  const model = cred.model || process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5'
   try {
     const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -40,7 +45,7 @@ async function callAnthropic(system: string, messages: ChatMessage[]): Promise<L
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5',
+        model,
         max_tokens: MAX_TOKENS,
         system,
         messages,
@@ -60,10 +65,12 @@ async function callAnthropic(system: string, messages: ChatMessage[]): Promise<L
   }
 }
 
-/** OpenAI Chat Completions — used when OPENAI_API_KEY is set. */
+/** OpenAI Chat Completions — used when an OpenAI key is saved in the API Keys tab or set as an env var. */
 async function callOpenai(system: string, messages: ChatMessage[]): Promise<LlmResult | null> {
-  const key = process.env.OPENAI_API_KEY
+  const cred = await getCredentialValues('openai')
+  const key = cred.apiKey || process.env.OPENAI_API_KEY || ''
   if (!key) return null
+  const model = cred.model || process.env.OPENAI_MODEL || 'gpt-4o-mini'
   try {
     const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -72,7 +79,7 @@ async function callOpenai(system: string, messages: ChatMessage[]): Promise<LlmR
         authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        model,
         max_tokens: MAX_TOKENS,
         messages: [{ role: 'system', content: system }, ...messages],
       }),

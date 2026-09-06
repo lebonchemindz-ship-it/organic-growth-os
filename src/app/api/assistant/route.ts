@@ -120,7 +120,7 @@ async function offlineRespond(message: string, ctx: ToolContext): Promise<{ repl
     return { reply: `**AI visibility (GEO) prompts**\n${fmtRows(r.data as Array<Record<string, unknown>>, ['prompt', 'chatgpt', 'perplexity', 'claude', 'competitor'])}\n(true = brand mentioned)`, tools }
   }
   return {
-    reply: `I'm Sprout, the growth agent for **${ctx.brandName}** — but I'm currently in **offline mode** (no AI provider key configured on this deployment).
+    reply: `I'm Sprout, the growth agent for **${ctx.brandName}** — but I'm currently in **offline mode** (no AI provider key saved yet).
 
 I can still run system commands for you right now — try:
 • "show me the overview" / "ملخص"
@@ -128,12 +128,7 @@ I can still run system commands for you right now — try:
 • "top opportunities" / "الفرص"
 • "run a site audit" / "فحص الموقع"
 
-**To unlock full intelligence** (analysis, planning, content briefs, task creation from natural language), set one of these environment variables in your Vercel project:
-\`\`\`
-ANTHROPIC_API_KEY=sk-ant-...   (recommended — Claude)
-OPENAI_API_KEY=sk-...           (alternative)
-\`\`\`
-See the "APIs Required" tab for details.`,
+**To unlock full intelligence** (analysis, planning, content briefs, task creation from natural language), open the **API Keys** tab (System → API Keys) in the sidebar and paste an Anthropic API key (recommended — console.anthropic.com, ~$5 to start) or an OpenAI key. It takes effect immediately — no server access needed.`,
     tools,
   }
 }
