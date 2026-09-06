@@ -1,0 +1,317 @@
+// Organic Growth OS — Prisma Schema
+// Modeled after the "Organic Growth Operating System" architecture:
+// Brand isolation, Decision & Autonomy Engine, Persistent Memory,
+// SEO/AEO/GEO engines, Authority & Outreach, Weekly Owner Reports.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// LAYER 3: BRANDS (each brand gets its own isolated world)
+// ============================================================
+
+model Brand {
+  id           String   @id @default(cuid())
+  slug         String   @unique // e.g. "holy_strips"
+  name         String
+  domain       String
+  status       String   @default("PENDING_ACTIVATION") // ACTIVE | PENDING_ACTIVATION | PAUSED
+  industry     String   @default("")
+  description  String   @default("")
+  // Brand Truth (CLASS 1 data)
+  positioning  String   @default("")
+  targetAudience String @default("")
+  voice        String   @default("")
+  approvedClaims String @default("")
+  restrictedClaims String @default("")
+  // Baseline metrics
+  baselineScore Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  keywords        Keyword[]
+  opportunities   Opportunity[]
+  content         ContentItem[]
+  publishers      Publisher[]
+  outreach        OutreachCampaign[]
+  approvals       ApprovalItem[]
+  aiPrompts       AiPrompt[]
+  reports         WeeklyReport[]
+  events          SystemEvent[]
+  backlinkRecords BacklinkRecord[]
+  integrations    Integration[]
+}
+
+// ============================================================
+// KEYWORD ENGINE — keyword universe per brand
+// ============================================================
+
+model Keyword {
+  id               String   @id @default(cuid())
+  brandId          String
+  brand            Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  term             String
+  intent           String   @default("INFORMATIONAL") // INFORMATIONAL | COMMERCIAL | TRANSACTIONAL | NAVIGATIONAL
+  funnelStage      String   @default("TOFU") // TOFU | MOFU | BOFU
+  monthlyVolume    Int      @default(0)
+  difficulty       Int      @default(0) // 0-100
+  currentPosition  Int      @default(0) // 0 = not ranking
+  previousPosition Int      @default(0)
+  targetUrl        String   @default("")
+  commercialValue  Int      @default(0) // 0-100
+  aeoValue         Int      @default(0) // answer-engine value 0-100
+  geoValue         Int      @default(0) // AI-search value 0-100
+  cannibalRisk     Boolean  @default(false)
+  status           String   @default("TRACKING") // TRACKING | TARGETED | WON | LOST | PARKED
+  updatedAt        DateTime @updatedAt
+  createdAt        DateTime @default(now())
+
+  @@index([brandId])
+}
+
+// ============================================================
+// DECISION & AUTONOMY ENGINE — the opportunity queue
+// VALUE = Impact x Probability x Confidence x Strategic Value x Urgency
+// ============================================================
+
+model Opportunity {
+  id                String   @id @default(cuid())
+  brandId           String
+  brand             Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  title             String
+  type              String   @default("CONTENT") // CONTENT | TECHNICAL_SEO | REFRESH | INTERNAL_LINKS | AUTHORITY | OUTREACH | AEO | GEO | PRODUCT_SEARCH | INDEXING
+  description       String   @default("")
+  // scoring inputs (0-100)
+  impact            Int      @default(0)
+  probability       Int      @default(0)
+  confidence        Int      @default(0)
+  strategicValue    Int      @default(0)
+  urgency           Int      @default(0)
+  effort            Int      @default(0)
+  opportunityScore  Float    @default(0) // computed VALUE
+  autonomyLevel     String   @default("GREEN") // GREEN | YELLOW | RED
+  status            String   @default("DISCOVERED") // DISCOVERED | VERIFIED | PRIORITIZED | EXECUTING | SCHEDULED | TESTING | MONITORING | APPROVAL_REQUIRED | BLOCKED | COMPLETED | REJECTED | ROLLBACK
+  recommendedAction String   @default("")
+  keyword           String   @default("")
+  url               String   @default("")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  completedAt       DateTime?
+
+  @@index([brandId, status])
+  @@index([brandId, opportunityScore])
+}
+
+// ============================================================
+// CONTENT ENGINE — pipeline from brief to refresh
+// ============================================================
+
+model ContentItem {
+  id            String    @id @default(cuid())
+  brandId       String
+  brand         Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  title         String
+  type          String    @default("ARTICLE") // ARTICLE | PRODUCT_PAGE | COLLECTION | COMPARISON | TOPICAL_HUB | REFRESH | AUTHORITY_ASSET
+  stage         String    @default("BRIEF") // BRIEF | DRAFTING | FACT_CHECK | OPTIMIZING | IMAGING | LINKING | SCHEDULED | PUBLISHED | MONITORING | REFRESHING
+  keyword       String    @default("")
+  wordCount     Int       @default(0)
+  autonomyLevel String    @default("GREEN")
+  hasImages     Boolean   @default(false)
+  internalLinks Int       @default(0)
+  scheduledFor  DateTime?
+  publishedAt   DateTime?
+  url           String    @default("")
+  // monitoring
+  organicClicks Int       @default(0)
+  position      Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([brandId, stage])
+}
+
+// ============================================================
+// AUTHORITY & OUTREACH ENGINE — publishers + sequences
+// Default: max 30 qualified contacts/day, Day 1 / 5 / 12 sequence
+// ============================================================
+
+model Publisher {
+  id                  String   @id @default(cuid())
+  brandId             String
+  brand               Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name                String
+  domain              String
+  niche               String   @default("")
+  qualificationScore  Int      @default(0) // 0-100, min 70 to qualify
+  contactName         String   @default("")
+  contactEmail        String   @default("")
+  status              String   @default("QUALIFIED") // PROSPECT | QUALIFIED | CONTACTED | REPLIED | NEGOTIATING | PLACED | DECLINED | DO_NOT_CONTACT
+  monthlyTraffic      Int      @default(0)
+  aiCitationPotential Int      @default(0) // 0-100
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  outreach            OutreachCampaign[]
+
+  @@index([brandId, status])
+}
+
+model OutreachCampaign {
+  id             String    @id @default(cuid())
+  brandId        String
+  brand          Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  publisherId    String
+  publisher      Publisher @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+  subject        String    @default("")
+  personalization String   @default("")
+  sequenceStage  String    @default("DAY_1") // DAY_1 | DAY_5 | DAY_12 | STOPPED | REPLIED | PLACED | DECLINED
+  sentAt         DateTime?
+  lastReplyAt    DateTime?
+  status         String    @default("QUEUED") // QUEUED | SENT | REPLIED | PLACED | STOPPED | DECLINED
+  result         String    @default("")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([brandId, status])
+}
+
+// ============================================================
+// GEO ENGINE — AI visibility tracking across LLMs
+// ============================================================
+
+model AiPrompt {
+  id                String   @id @default(cuid())
+  brandId           String
+  brand             Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  prompt            String
+  category          String   @default("COMMERCIAL") // COMMERCIAL | INFORMATIONAL | COMPARISON | RECOMMENDATION
+  chatgptMentioned  Boolean  @default(false)
+  geminiMentioned   Boolean  @default(false)
+  perplexityMentioned Boolean @default(false)
+  claudeMentioned   Boolean  @default(false)
+  copilotMentioned  Boolean  @default(false)
+  rankWhenMentioned Int      @default(0)
+  trend             String   @default("FLAT") // IMPROVING | FLAT | DECLINING
+  competitorMentioned String @default("")
+  lastCheckedAt     DateTime @default(now())
+  createdAt         DateTime @default(now())
+
+  @@index([brandId])
+}
+
+// ============================================================
+// OWNER APPROVAL QUEUE — RED actions only
+// ============================================================
+
+model ApprovalItem {
+  id           String    @id @default(cuid())
+  brandId      String
+  brand        Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  title        String
+  category     String    @default("CLAIM") // CLAIM | URL_MIGRATION | DELETION | PAID_PLACEMENT | SPENDING | ARCHITECTURE | REGULATORY
+  riskLevel    String    @default("RED")
+  description  String    @default("")
+  impact       String    @default("")
+  requestedAt  DateTime  @default(now())
+  status       String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  decidedAt    DateTime?
+
+  @@index([brandId, status])
+}
+
+// ============================================================
+// WEEKLY OWNER REPORT
+// ============================================================
+
+model WeeklyReport {
+  id                 String   @id @default(cuid())
+  brandId            String
+  brand              Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  weekOf             DateTime
+  organicGrowthScore Int      @default(0) // 0-100
+  direction          String   @default("FLAT") // STRONGLY_IMPROVING | IMPROVING | FLAT | DECLINING | STRONGLY_DECLINING
+  top3Count          Int      @default(0)
+  top10Count         Int      @default(0)
+  keywordsGained     Int      @default(0)
+  keywordsLost       Int      @default(0)
+  organicClicks      Int      @default(0)
+  organicClicksDelta Int      @default(0)
+  referringDomains   Int      @default(0)
+  aiMentionRate      Int      @default(0) // % of priority prompts mentioning brand
+  biggestWins        String   @default("")
+  biggestProblems    String   @default("")
+  learned            String   @default("")
+  nextActions        String   @default("")
+  verdict            String   @default("TOO_EARLY_TO_DETERMINE") // YES_STRONG_EVIDENCE | YES_EARLY_POSITIVE | TOO_EARLY_TO_DETERMINE | MIXED | NO_CHANGE_REQUIRED
+  confidenceLevel    String   @default("MEDIUM")
+  createdAt          DateTime @default(now())
+
+  @@index([brandId, weekOf])
+}
+
+// ============================================================
+// INTEGRATIONS — the 13-connection checklist
+// ============================================================
+
+model Integration {
+  id           String    @id @default(cuid())
+  brandId      String? // null = shared infrastructure
+  brand        Brand?    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  order        Int       @default(0)
+  name         String
+  layer        String    @default("") // BRAIN | INTELLIGENCE | AUTOMATION | DATABASE | GOOGLE | MICROSOFT | OUTREACH | CREATIVE | PUBLISHING
+  purpose      String    @default("")
+  scope        String    @default("SHARED") // SHARED | PER_BRAND
+  status       String    @default("PENDING") // CONNECTED | PENDING | ACTION_REQUIRED
+  docsUrl      String    @default("")
+  apiKeyEnvVar String    @default("")
+  connectedAt  DateTime?
+
+  @@index([order])
+}
+
+// ============================================================
+// AUTHORITY — backlink & referring domain ledger
+// ============================================================
+
+model BacklinkRecord {
+  id              String   @id @default(cuid())
+  brandId         String
+  brand           Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  sourceDomain    String
+  sourceUrl       String   @default("")
+  targetUrl       String   @default("")
+  type            String   @default("EDITORIAL") // EDITORIAL | MENTION | ROUNDUP | REVIEW | COMPARISON | UNLINKED_MENTION
+  authorityScore  Int      @default(0) // 0-100
+  referralTraffic Int      @default(0)
+  aiCitationValue Boolean  @default(false)
+  firstSeenAt     DateTime @default(now())
+  lastCheckedAt   DateTime @default(now())
+  status          String   @default("ACTIVE") // ACTIVE | LOST | NOFOLLOW
+
+  @@index([brandId])
+}
+
+// ============================================================
+// SYSTEM LOG — daily loop runs, errors, emergency alerts
+// ============================================================
+
+model SystemEvent {
+  id        String   @id @default(cuid())
+  brandId   String?
+  brand     Brand?   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  type      String   @default("DAILY_LOOP") // DAILY_LOOP | OPPORTUNITY | CONTENT | OUTREACH | ALERT | ERROR | LEARNING
+  level     String   @default("INFO") // INFO | WARN | CRITICAL
+  message   String
+  meta      String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([brandId, createdAt])
+  @@index([type, createdAt])
+}

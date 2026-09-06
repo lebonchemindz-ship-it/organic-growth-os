@@ -1,0 +1,237 @@
+'use client'
+
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet'
+import {
+  LayoutDashboard, Sparkles, Search, FileText, Users, Bot, ShieldAlert,
+  Plug, Building2, FileBarChart, TerminalSquare, KeyRound, Menu, Sprout,
+  Activity,
+} from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { DashboardView } from '@/components/organic/dashboard'
+import { OpportunitiesView } from '@/components/organic/opportunities'
+import { KeywordsView } from '@/components/organic/keywords'
+import { ContentView } from '@/components/organic/content'
+import { OutreachView } from '@/components/organic/outreach'
+import { AiVisibilityView } from '@/components/organic/ai-visibility'
+import { ApprovalsView } from '@/components/organic/approvals'
+import { IntegrationsView } from '@/components/organic/integrations'
+import { BrandsView } from '@/components/organic/brands'
+import { ReportsView } from '@/components/organic/reports'
+import { MasterPromptView } from '@/components/organic/master-prompt-view'
+import { ApisView } from '@/components/organic/apis-view'
+import { useApiData } from '@/components/organic/shared'
+
+type SectionId =
+  | 'dashboard' | 'opportunities' | 'keywords' | 'content' | 'outreach'
+  | 'ai' | 'approvals' | 'reports' | 'brands' | 'integrations' | 'master' | 'apis'
+
+const NAV: Array<{ group: string; items: Array<{ id: SectionId; label: string; icon: React.ReactNode }> }> = [
+  {
+    group: 'Operate',
+    items: [
+      { id: 'dashboard', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
+      { id: 'opportunities', label: 'Opportunities', icon: <Sparkles className="h-4 w-4" /> },
+      { id: 'keywords', label: 'Keywords', icon: <Search className="h-4 w-4" /> },
+      { id: 'content', label: 'Content Engine', icon: <FileText className="h-4 w-4" /> },
+      { id: 'outreach', label: 'Outreach & Authority', icon: <Users className="h-4 w-4" /> },
+      { id: 'ai', label: 'AI Visibility', icon: <Bot className="h-4 w-4" /> },
+    ],
+  },
+  {
+    group: 'Own',
+    items: [
+      { id: 'approvals', label: 'Approvals', icon: <ShieldAlert className="h-4 w-4" /> },
+      { id: 'reports', label: 'Weekly Report', icon: <FileBarChart className="h-4 w-4" /> },
+    ],
+  },
+  {
+    group: 'System',
+    items: [
+      { id: 'brands', label: 'Brands', icon: <Building2 className="h-4 w-4" /> },
+      { id: 'integrations', label: 'Integrations', icon: <Plug className="h-4 w-4" /> },
+      { id: 'master', label: 'The OS — Prompt', icon: <TerminalSquare className="h-4 w-4" /> },
+      { id: 'apis', label: 'APIs Required', icon: <KeyRound className="h-4 w-4" /> },
+    ],
+  },
+]
+
+const SECTION_META: Record<SectionId, { title: string; sub: string }> = {
+  dashboard: { title: 'Overview', sub: 'The operating system at a glance' },
+  opportunities: { title: 'Opportunities', sub: 'Decision & autonomy engine' },
+  keywords: { title: 'Keywords', sub: 'The keyword universe' },
+  content: { title: 'Content Engine', sub: 'From brief to refresh' },
+  outreach: { title: 'Outreach & Authority', sub: 'Earn links, mentions and AI citations' },
+  ai: { title: 'AI Visibility', sub: 'GEO engine across LLMs' },
+  approvals: { title: 'Approvals', sub: 'Owner approval queue' },
+  reports: { title: 'Weekly Report', sub: 'One report that matters' },
+  brands: { title: 'Brands', sub: 'Brand fleet & isolation' },
+  integrations: { title: 'Integrations', sub: 'The 13-connection checklist' },
+  master: { title: 'The OS — Master Prompt', sub: 'Install once as CLAUDE.md' },
+  apis: { title: 'APIs Required', sub: 'Everything you need to connect' },
+}
+
+interface BrandsListData {
+  brands: Array<{ slug: string; name: string; status: string }>
+}
+
+function NavContent({ active, onNavigate }: { active: SectionId; onNavigate: (id: SectionId) => void }) {
+  return (
+    <nav className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 py-4">
+      {NAV.map((group) => (
+        <div key={group.group}>
+          <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-widest text-sidebar-accent-foreground/50">
+            {group.group}
+          </p>
+          <div className="space-y-0.5">
+            {group.items.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onNavigate(item.id)}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors',
+                  active === item.id
+                    ? 'bg-sidebar-primary/20 text-sidebar-foreground'
+                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground'
+                )}
+              >
+                <span className={cn(active === item.id ? 'text-emerald-400' : 'text-sidebar-foreground/50')}>{item.icon}</span>
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </nav>
+  )
+}
+
+export default function Home() {
+  const [section, setSection] = useState<SectionId>('dashboard')
+  const [brandSlug, setBrandSlug] = useState('holy_strips')
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+
+  const { data: brandsData } = useApiData<BrandsListData>('/api/brands')
+  const activeBrand = brandsData?.brands.find((b) => b.slug === brandSlug)
+
+  function navigate(id: SectionId) {
+    setSection(id)
+    setMobileNavOpen(false)
+  }
+
+  const meta = SECTION_META[section]
+
+  return (
+    <div className="flex min-h-screen bg-background">
+      {/* Desktop sidebar */}
+      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
+        <div className="flex items-center gap-2.5 px-4 py-4">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
+            <Sprout className="h-5 w-5" />
+          </span>
+          <div>
+            <p className="text-sm font-bold leading-tight text-sidebar-foreground">Organic Growth OS</p>
+            <p className="text-[10px] text-sidebar-foreground/50">v1.1 · autonomous growth machine</p>
+          </div>
+        </div>
+
+        <NavContent active={section} onNavigate={navigate} />
+
+        {/* Brand switcher footer */}
+        <div className="border-t border-sidebar-border p-3">
+          <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-widest text-sidebar-accent-foreground/50">
+            Active brand
+          </p>
+          <div className="flex items-center gap-2 rounded-lg bg-sidebar-accent/60 px-2.5 py-2">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold text-sidebar-foreground">{activeBrand?.name ?? 'Holy Strips'}</p>
+              <p className="truncate text-[10px] text-sidebar-foreground/50">{activeBrand?.status === 'ACTIVE' ? 'autonomous operation' : 'pending activation'}</p>
+            </div>
+            <Badge variant="outline" className="h-5 shrink-0 border-emerald-500/30 bg-emerald-500/10 px-1.5 text-[9px] text-emerald-400">
+              LIVE
+            </Badge>
+          </div>
+          <button
+            onClick={() => navigate('brands')}
+            className="mt-2 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] text-sidebar-foreground/60 hover:text-sidebar-foreground"
+          >
+            <Activity className="h-3 w-3" /> switch brand →
+          </button>
+        </div>
+      </aside>
+
+      {/* Main column */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* Top bar */}
+        <header className="sticky top-0 z-40 flex items-center gap-3 border-b border-border bg-background/85 px-4 py-3 backdrop-blur sm:px-6">
+          {/* Mobile nav */}
+          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon" className="h-8 w-8 shrink-0 lg:hidden" aria-label="Open navigation">
+                <Menu className="h-4 w-4" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="w-64 border-sidebar-border bg-sidebar p-0">
+              <SheetTitle className="sr-only">Navigation</SheetTitle>
+              <div className="flex items-center gap-2.5 px-4 py-4">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400">
+                  <Sprout className="h-5 w-5" />
+                </span>
+                <p className="text-sm font-bold text-sidebar-foreground">Organic Growth OS</p>
+              </div>
+              <NavContent active={section} onNavigate={navigate} />
+            </SheetContent>
+          </Sheet>
+
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-base font-bold tracking-tight sm:text-lg">{meta.title}</h1>
+            <p className="hidden truncate text-xs text-muted-foreground sm:block">{meta.sub}</p>
+          </div>
+
+          <div className="hidden items-center gap-2 md:flex">
+            <Badge variant="outline" className="gap-1.5 border-emerald-500/30 bg-emerald-500/10 text-[11px] text-emerald-600 dark:text-emerald-400">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              Daily loop active
+            </Badge>
+            <Badge variant="secondary" className="text-[11px]">{activeBrand?.name ?? 'Holy Strips'}</Badge>
+          </div>
+        </header>
+
+        {/* Content */}
+        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-6xl">
+            {section === 'dashboard' && <DashboardView brandSlug={brandSlug} />}
+            {section === 'opportunities' && <OpportunitiesView brandSlug={brandSlug} />}
+            {section === 'keywords' && <KeywordsView brandSlug={brandSlug} />}
+            {section === 'content' && <ContentView brandSlug={brandSlug} />}
+            {section === 'outreach' && <OutreachView brandSlug={brandSlug} />}
+            {section === 'ai' && <AiVisibilityView brandSlug={brandSlug} />}
+            {section === 'approvals' && <ApprovalsView brandSlug={brandSlug} />}
+            {section === 'reports' && <ReportsView brandSlug={brandSlug} />}
+            {section === 'brands' && <BrandsView activeSlug={brandSlug} onSelect={setBrandSlug} />}
+            {section === 'integrations' && <IntegrationsView />}
+            {section === 'master' && <MasterPromptView />}
+            {section === 'apis' && <ApisView />}
+          </div>
+        </main>
+
+        {/* Footer */}
+        <footer className="mt-auto border-t border-border bg-background px-4 py-4 sm:px-6">
+          <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 text-xs text-muted-foreground sm:flex-row">
+            <p>Organic Growth OS — one system, many brands, zero spam.</p>
+            <p className="flex items-center gap-1.5">
+              <Sprout className="h-3 w-3 text-emerald-500" />
+              Discover → Verify → Prioritize → Execute → Measure → Learn
+            </p>
+          </div>
+        </footer>
+      </div>
+    </div>
+  )
+}
