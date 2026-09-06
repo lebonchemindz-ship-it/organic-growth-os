@@ -7,7 +7,7 @@ import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/s
 import {
   LayoutDashboard, Sparkles, Search, FileText, Users, Bot, ShieldAlert,
   Plug, Building2, FileBarChart, TerminalSquare, KeyRound, Menu, Sprout,
-  Activity,
+  Activity, FlaskConical, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { DashboardView } from '@/components/organic/dashboard'
@@ -112,6 +112,7 @@ export default function Home() {
   const [section, setSection] = useState<SectionId>('dashboard')
   const [brandSlug, setBrandSlug] = useState('holy_strips')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [demoBannerDismissed, setDemoBannerDismissed] = useState(false)
 
   const { data: brandsData } = useApiData<BrandsListData>('/api/brands')
   const activeBrand = brandsData?.brands.find((b) => b.slug === brandSlug)
@@ -133,7 +134,7 @@ export default function Home() {
           </span>
           <div>
             <p className="text-sm font-bold leading-tight text-sidebar-foreground">Organic Growth OS</p>
-            <p className="text-[10px] text-sidebar-foreground/50">v1.1 · autonomous growth machine</p>
+            <p className="text-[10px] text-sidebar-foreground/50">v1.2 · autonomous growth machine</p>
           </div>
         </div>
 
@@ -150,8 +151,8 @@ export default function Home() {
               <p className="truncate text-xs font-semibold text-sidebar-foreground">{activeBrand?.name ?? 'Holy Strips'}</p>
               <p className="truncate text-[10px] text-sidebar-foreground/50">{activeBrand?.status === 'ACTIVE' ? 'autonomous operation' : 'pending activation'}</p>
             </div>
-            <Badge variant="outline" className="h-5 shrink-0 border-emerald-500/30 bg-emerald-500/10 px-1.5 text-[9px] text-emerald-400">
-              LIVE
+            <Badge variant="outline" className="h-5 shrink-0 border-amber-500/40 bg-amber-500/10 px-1.5 text-[9px] text-amber-600 dark:text-amber-400">
+              DEMO
             </Badge>
           </div>
           <button
@@ -192,12 +193,9 @@ export default function Home() {
           </div>
 
           <div className="hidden items-center gap-2 md:flex">
-            <Badge variant="outline" className="gap-1.5 border-emerald-500/30 bg-emerald-500/10 text-[11px] text-emerald-600 dark:text-emerald-400">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              </span>
-              Daily loop active
+            <Badge variant="outline" className="gap-1.5 border-amber-500/40 bg-amber-500/10 text-[11px] text-amber-600 dark:text-amber-400">
+              <FlaskConical className="h-3 w-3" />
+              Demo data — not live metrics
             </Badge>
             <Badge variant="secondary" className="text-[11px]">{activeBrand?.name ?? 'Holy Strips'}</Badge>
           </div>
@@ -206,6 +204,28 @@ export default function Home() {
         {/* Content */}
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-6xl">
+            {!demoBannerDismissed && (
+              <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-700 dark:text-amber-300">
+                <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="min-w-0 flex-1 text-[13px] leading-relaxed">
+                  <p className="font-semibold">This dashboard runs on simulated demo data.</p>
+                  <p className="mt-0.5 text-amber-700/80 dark:text-amber-300/80">
+                    Every metric you see for Holy Strips and the other brands (keyword volumes and positions, traffic
+                    estimates, AI visibility scores, backlinks, outreach and reports) is realistic placeholder data seeded
+                    to demonstrate the system. It is <b>not</b> real data from holystrips.com. Connect the real APIs
+                    (DataForSEO, Google Search Console, GA4, Shopify…) listed under “APIs Required” to replace it with
+                    live numbers.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setDemoBannerDismissed(true)}
+                  aria-label="Dismiss demo data notice"
+                  className="shrink-0 rounded-md p-1 text-amber-700/60 transition-colors hover:text-amber-700 dark:text-amber-300/60 dark:hover:text-amber-200"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
             {section === 'dashboard' && <DashboardView brandSlug={brandSlug} />}
             {section === 'opportunities' && <OpportunitiesView brandSlug={brandSlug} />}
             {section === 'keywords' && <KeywordsView brandSlug={brandSlug} />}

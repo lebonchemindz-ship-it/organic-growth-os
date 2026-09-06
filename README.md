@@ -6,6 +6,14 @@
 
 ---
 
+## ⚠️ Important: the numbers are simulated (demo data)
+
+**All metrics visible in this dashboard are realistic placeholder data, not real data.** Keyword volumes, ranking positions, traffic estimates, AI visibility scores, backlinks, outreach states and weekly reports were **seeded to demonstrate the system** — they are **not** actual measurements from holystrips.com (or any other brand domain).
+
+The dashboard is the *control room*; the numbers become real once you connect the live data sources (DataForSEO, Google Search Console, GA4, Shopify, Anthropic, Hunter…) listed under the **"APIs Required"** tab. Until those connections exist, treat every statistic as illustrative. The UI labels this clearly with an amber "Demo data — not live metrics" badge and banner.
+
+---
+
 ## What this is
 
 This dashboard mirrors the full architecture designed in the original Organic Growth OS blueprint:
