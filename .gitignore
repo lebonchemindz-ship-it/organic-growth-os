@@ -85,3 +85,4 @@ db/*.db-journal
 /upload/
 dev.log
 .env
+.vault-secrets.txt
