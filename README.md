@@ -58,12 +58,12 @@ An agentic assistant embedded in the dashboard. It is **not** a search box — i
 You no longer need the Vercel dashboard or a terminal to connect services. Open **System → API Keys** in the sidebar and paste each key once:
 
 - **Encrypted at rest** — AES-256-GCM in the app database; the UI only shows masked values (`sk-a•••f21x`).
-- **Permanent storage** — when `VERCEL_TOKEN` + `VERCEL_PROJECT_ID` are configured, every saved key is also synced to the Vercel project's environment variables, so it **survives serverless cold starts and rebuilds** (the app re-imports env vars into the vault on boot). A rebuild is triggered automatically so the backup goes live.
+- **Permanent storage, no redeploys** — when `VERCEL_TOKEN` + `VERCEL_PROJECT_ID` are configured, every saved key is also written to the Vercel project's environment variables as runtime-readable values. Every new server instance **restores the vault from that backup automatically on cold start** — no rebuild, no waiting, nothing to click.
 - **Immediate effect** — the Sprout agent and the LLM provider chain read the vault first, so a saved Anthropic/OpenAI key wakes the chatbot up **without any redeploy**.
 - **Test connection** — one click verifies Anthropic, OpenAI, DataForSEO (shows balance), Hunter, Supabase and Shopify keys against the live services.
 - **PIN protection** — set `SETTINGS_PIN` and the dashboard asks for it before saving/removing keys.
 
-Routes: `GET /api/keys` (masked states) · `POST /api/keys` (save + env sync) · `DELETE /api/keys?service=` · `POST /api/keys/test` · `POST /api/keys/redeploy`.
+Routes: `GET /api/keys` (masked states) · `POST /api/keys` (save + env backup) · `DELETE /api/keys?service=` · `POST /api/keys/test` (live connection tests) · `POST /api/keys/verify` (PIN check + backup restore).
 
 ---
 
