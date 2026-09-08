@@ -1,16 +1,24 @@
 // ============================================================
-// VERCEL ENV SYNC (server-only, optional)
+// VERCEL ENV STORE (server-only, optional)
 // When VERCEL_TOKEN (+ VERCEL_PROJECT_ID or project name) is
 // configured, credentials saved from the dashboard are also
 // written to the Vercel project's environment variables —
 // the only storage that survives serverless cold starts.
+//
+// Env vars are written as "plain" type deliberately: plain
+// values can be read back at runtime via the Vercel API, so a
+// fresh server instance can restore the credential vault
+// WITHOUT waiting for a new deployment. (The project has no
+// git link, so API-triggered rebuilds are not possible — and
+// with runtime reads they are no longer needed at all.)
+//
 // Every call is best-effort: failures never block a save.
 // ============================================================
 
 const API = 'https://api.vercel.com'
-const REDEPLOY_COOLDOWN_MS = 5 * 60 * 1000
+const REMOTE_CACHE_TTL_MS = 15_000
 
-let lastRedeployAt = 0
+let remoteCache: { values: Record<string, string>; ts: number } | null = null
 
 export function isEnvSyncAvailable(): boolean {
   return Boolean(process.env.VERCEL_TOKEN && process.env.VERCEL_TOKEN.trim())
@@ -22,10 +30,6 @@ function projectId(): string {
     process.env.VERCEL_PROJECT_NAME?.trim() ||
     'organic-growth-os'
   )
-}
-
-function projectName(): string {
-  return process.env.VERCEL_PROJECT_NAME?.trim() || 'organic-growth-os'
 }
 
 async function vercelApi(path: string, init: RequestInit = {}, timeoutMs = 12_000): Promise<null | Response> {
@@ -55,10 +59,11 @@ interface EnvRecord {
   key: string
   target?: string[]
   type?: string
+  value?: string
 }
 
 async function listEnvVars(): Promise<EnvRecord[]> {
-  const res = await vercelApi(`/v9/projects/${projectId()}/env?limit=100`)
+  const res = await vercelApi(`/v9/projects/${projectId()}/env?limit=100&decrypt=true`)
   if (!res || !res.ok) {
     console.error('[vercel-env] list failed:', res ? res.status : 'no response')
     return []
@@ -72,21 +77,71 @@ async function listEnvVars(): Promise<EnvRecord[]> {
   }
 }
 
-/** Create or update an environment variable (production + preview). Returns true on success. */
-export async function upsertEnvVar(key: string, value: string, isSecret: boolean): Promise<boolean> {
+/**
+ * Current env-var values of the Vercel project, as readable at
+ * RUNTIME (plain values only — sensitive values are not returned
+ * by the API). Cached in-memory for 15s per server instance.
+ * Returns {} when env sync is unavailable or the API fails.
+ */
+export async function getRemoteEnvValues(): Promise<Record<string, string>> {
+  if (!isEnvSyncAvailable()) return {}
+  if (remoteCache && Date.now() - remoteCache.ts < REMOTE_CACHE_TTL_MS) {
+    return remoteCache.values
+  }
+  const values: Record<string, string> = {}
+  for (const e of await listEnvVars()) {
+    if (e.key && typeof e.value === 'string' && e.value) values[e.key] = e.value
+  }
+  remoteCache = { values, ts: Date.now() }
+  return values
+}
+
+/** Drop the cached env snapshot so the next read hits the API. */
+export function invalidateRemoteEnvCache(): void {
+  remoteCache = null
+}
+
+/**
+ * Create or update an environment variable (production + preview)
+ * as PLAIN type so it can be read back at runtime. When an existing
+ * variable is "sensitive"/"encrypted", it is deleted and recreated
+ * (Vercel does not allow type changes via PATCH).
+ * Returns true on success.
+ */
+export async function upsertEnvVar(key: string, value: string): Promise<boolean> {
   const existing = (await listEnvVars()).find((e) => e.key === key)
   const target = Array.from(new Set([...(existing?.target || ['production']), 'production', 'preview']))
-  const type = isSecret ? 'sensitive' : 'plain'
-  const body = JSON.stringify({ key, value, target, type })
 
-  if (existing) {
-    const res = await vercelApi(`/v9/projects/${projectId()}/env/${existing.id}`, { method: 'PATCH', body })
-    if (res && res.ok) return true
+  if (existing && existing.type === 'plain') {
+    const res = await vercelApi(`/v9/projects/${projectId()}/env/${existing.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ key, value, target, type: 'plain' }),
+    })
+    if (res && res.ok) {
+      invalidateRemoteEnvCache()
+      return true
+    }
     console.error('[vercel-env] patch failed:', key, res ? res.status : 'no response')
     return false
   }
-  const res = await vercelApi(`/v10/projects/${projectId()}/env`, { method: 'POST', body })
-  if (res && res.ok) return true
+
+  // type change required (or brand new) → remove the old record first
+  if (existing) {
+    const del = await vercelApi(`/v9/projects/${projectId()}/env/${existing.id}`, { method: 'DELETE' })
+    if (!del || !(del.ok || del.status === 204)) {
+      console.error('[vercel-env] delete-before-recreate failed:', key, del ? del.status : 'no response')
+      return false
+    }
+  }
+
+  const res = await vercelApi(`/v10/projects/${projectId()}/env`, {
+    method: 'POST',
+    body: JSON.stringify({ key, value, target, type: 'plain' }),
+  })
+  if (res && res.ok) {
+    invalidateRemoteEnvCache()
+    return true
+  }
   console.error('[vercel-env] create failed:', key, res ? res.status : 'no response')
   return false
 }
@@ -96,29 +151,10 @@ export async function removeEnvVar(key: string): Promise<boolean> {
   const existing = (await listEnvVars()).find((e) => e.key === key)
   if (!existing) return true
   const res = await vercelApi(`/v9/projects/${projectId()}/env/${existing.id}`, { method: 'DELETE' })
-  if (res && (res.ok || res.status === 204)) return true
+  if (res && (res.ok || res.status === 204)) {
+    invalidateRemoteEnvCache()
+    return true
+  }
   console.error('[vercel-env] delete failed:', key, res ? res.status : 'no response')
   return false
-}
-
-/** Trigger a production rebuild from the main branch so new env vars go live. Cooldown: 5 minutes. */
-export async function triggerRedeploy(force = false): Promise<{ triggered: boolean; reason: string }> {
-  if (!force && Date.now() - lastRedeployAt < REDEPLOY_COOLDOWN_MS) {
-    return { triggered: false, reason: 'cooldown' }
-  }
-  const repoId = Number(process.env.VERCEL_GIT_REPO_ID?.trim() || process.env.GITHUB_REPO_ID?.trim() || 0)
-  if (!repoId) {
-    return { triggered: false, reason: 'unknown GitHub repo id (set GITHUB_REPO_ID env var)' }
-  }
-  const body = JSON.stringify({
-    name: projectName(),
-    target: 'production',
-    gitSource: { type: 'github', repoId, ref: process.env.VERCEL_GIT_COMMIT_REF?.trim() || 'main' },
-  })
-  const res = await vercelApi('/v13/deployments?skipAutoDetectionConfirmation=1', { method: 'POST', body }, 25_000)
-  if (res && res.ok) {
-    lastRedeployAt = Date.now()
-    return { triggered: true, reason: 'production rebuild started from main' }
-  }
-  return { triggered: false, reason: `deployment creation failed (${res ? res.status : 'no response'})` }
 }

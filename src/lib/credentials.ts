@@ -9,6 +9,7 @@
 import { db } from '@/lib/db'
 import { CREDENTIAL_SERVICES, findCredentialService, type CredentialService } from '@/lib/credential-services'
 import { decryptJson, encryptJson, maskSecret } from '@/lib/vault'
+import { getRemoteEnvValues, isEnvSyncAvailable } from '@/lib/vercel-env'
 
 const CACHE_TTL_MS = 15_000
 const valueCache = new Map<string, { values: Record<string, string>; ts: number }>()
@@ -39,14 +40,9 @@ export async function getCredentialValues(serviceId: string): Promise<Record<str
     const row = await db.credential.findUnique({ where: { service: serviceId } })
     if (row && row.valuesEnc) values = decryptJson(row.valuesEnc)
   } catch (e) {
-    // table may not exist yet (before ensureSeeded) — fall back to env vars
+    // table may not exist yet (before ensureSeeded) — fall back to the durable env store
     const svc = findCredentialService(serviceId)
-    if (svc) {
-      for (const f of svc.fields) {
-        const ev = f.envVars.find((v) => process.env[v] && process.env[v]!.trim())
-        if (ev) values[f.id] = process.env[ev]!.trim()
-      }
-    }
+    if (svc) values = { ...values, ...(await durableFieldValues(svc)) }
     console.error('[credentials] read failed:', serviceId, e instanceof Error ? e.message : e)
   }
   valueCache.set(serviceId, { values, ts: Date.now() })
@@ -86,13 +82,27 @@ export async function deleteCredential(serviceId: string): Promise<void> {
   valueCache.delete(serviceId)
 }
 
-function fieldValuesFromEnv(svc: CredentialService): Record<string, string> {
+/**
+ * Durable field values for a service: the Vercel project env vars read
+ * LIVE from the API (runtime-readable "plain" values). Falls back to the
+ * deployment's baked process.env only when env sync is not configured.
+ * Remote values win because they reflect the LATEST saved keys without
+ * requiring a redeploy — and deleted keys are never resurrected from a
+ * stale deployment snapshot.
+ */
+async function durableFieldValues(svc: CredentialService): Promise<Record<string, string>> {
+  const source = isEnvSyncAvailable() ? await getRemoteEnvValues() : process.env
   const values: Record<string, string> = {}
   for (const f of svc.fields) {
-    const ev = f.envVars.find((v) => process.env[v] && process.env[v]!.trim())
-    if (ev) values[f.id] = process.env[ev]!.trim()
+    const ev = f.envVars.find((v) => source[v] && source[v]!.trim())
+    if (ev) values[f.id] = source[ev]!.trim()
   }
   return values
+}
+
+/** The env-var values a service's fields are checked against (for sync badges). */
+async function envSyncSnapshot(): Promise<Record<string, string>> {
+  return isEnvSyncAvailable() ? await getRemoteEnvValues() : (process.env as Record<string, string>)
 }
 
 /** Masked/public states for every service in the registry (for the dashboard). */
@@ -104,15 +114,15 @@ export async function buildServiceStates(): Promise<CredentialServiceState[]> {
     console.error('[credentials] list failed:', e instanceof Error ? e.message : e)
   }
   const byService = new Map(rows.map((r) => [r.service, r]))
+  const envSnapshot = await envSyncSnapshot()
 
   return CREDENTIAL_SERVICES.map((svc) => {
     const row = byService.get(svc.id)
     const values = row && row.valuesEnc ? decryptJson(row.valuesEnc) : {}
-    const envValues = fieldValuesFromEnv(svc)
-    const effective = { ...envValues, ...values } // stored values win over env
+    const effective = { ...values } // stored values win
     const fields: CredentialFieldState[] = svc.fields.map((f) => {
       const val = effective[f.id] || ''
-      const envSynced = f.envVars.some((ev) => val && process.env[ev] === val)
+      const envSynced = f.envVars.some((ev) => val && envSnapshot[ev] === val)
       return {
         id: f.id,
         set: Boolean(val),
@@ -131,9 +141,10 @@ export async function buildServiceStates(): Promise<CredentialServiceState[]> {
 }
 
 /**
- * Cold-start durability: copy credentials that exist only as deployment env
- * vars into the vault (never overwriting rows saved from the dashboard).
- * Called once per server instance from ensureSeeded().
+ * Cold-start durability: copy credentials that exist only in the durable
+ * env store (Vercel project env vars, read live) into the vault — never
+ * overwriting rows saved from the dashboard. Called once per server
+ * instance from ensureSeeded(). Also safe to call at any time (idempotent).
  */
 export async function importEnvCredentials(): Promise<number> {
   let imported = 0
@@ -141,7 +152,7 @@ export async function importEnvCredentials(): Promise<number> {
     try {
       const row = await db.credential.findUnique({ where: { service: svc.id } })
       if (row) continue
-      const envValues = fieldValuesFromEnv(svc)
+      const envValues = await durableFieldValues(svc)
       if (Object.keys(envValues).length === 0) continue
       await db.credential.create({
         data: { service: svc.id, valuesEnc: encryptJson(envValues), source: 'ENV' },
@@ -152,10 +163,22 @@ export async function importEnvCredentials(): Promise<number> {
     }
   }
   if (imported > 0) {
-    console.log(`[credentials] imported ${imported} credential(s) from deployment env vars`)
-    logCredentialEvent(`Imported ${imported} credential(s) from deployment environment variables`, {})
+    console.log(`[credentials] restored ${imported} credential(s) from the durable env backup`)
+    logCredentialEvent(`Restored ${imported} credential(s) from the durable environment backup`, {})
   }
   return imported
+}
+
+/**
+ * The owner's settings PIN. Read live from the durable env store when
+ * available (so a PIN change applies within ~15s, no redeploy needed),
+ * falling back to the deployment's baked process.env value.
+ */
+export async function getSettingsPin(): Promise<string | null> {
+  const remote = isEnvSyncAvailable() ? await getRemoteEnvValues() : null
+  const fromRemote = remote?.['SETTINGS_PIN']?.trim()
+  if (fromRemote) return fromRemote
+  return process.env.SETTINGS_PIN?.trim() || null
 }
 
 /** True when the Sprout agent has a real brain (Anthropic or OpenAI key). */

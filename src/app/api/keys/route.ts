@@ -1,9 +1,9 @@
 // ============================================================
 // CREDENTIAL VAULT — /api/keys
 // GET    → masked states for every service (+ pin/env-sync info)
-// POST   → save a credential (encrypted DB row + Vercel env sync)
+// POST   → save a credential (encrypted DB row + durable env backup)
 // DELETE → remove a credential and its env-var backup
-// When SETTINGS_PIN is configured, POST/DELETE require the
+// When a settings PIN is configured, POST/DELETE require the
 // x-settings-pin header (the owner's dashboard PIN).
 // ============================================================
 
@@ -14,16 +14,17 @@ import {
   buildServiceStates,
   deleteCredential,
   getCredentialValues,
+  getSettingsPin,
   isBrainLive,
   logCredentialEvent,
   saveCredentialValues,
 } from '@/lib/credentials'
-import { isEnvSyncAvailable, removeEnvVar, triggerRedeploy, upsertEnvVar } from '@/lib/vercel-env'
+import { isEnvSyncAvailable, removeEnvVar, upsertEnvVar } from '@/lib/vercel-env'
 
 export const dynamic = 'force-dynamic'
 
-function pinOk(req: NextRequest): { ok: true } | { ok: false; response: NextResponse } {
-  const pin = process.env.SETTINGS_PIN?.trim()
+async function pinOk(req: NextRequest): Promise<{ ok: true } | { ok: false; response: NextResponse }> {
+  const pin = await getSettingsPin()
   if (!pin) return { ok: true }
   if (req.headers.get('x-settings-pin') === pin) return { ok: true }
   return {
@@ -37,7 +38,7 @@ export async function GET() {
     await ensureSeeded()
     const [services, brain] = await Promise.all([buildServiceStates(), isBrainLive()])
     return NextResponse.json({
-      pinRequired: Boolean(process.env.SETTINGS_PIN?.trim()),
+      pinRequired: Boolean(await getSettingsPin()),
       envSyncAvailable: isEnvSyncAvailable(),
       brain,
       services,
@@ -51,7 +52,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     await ensureSeeded()
-    const gate = pinOk(req)
+    const gate = await pinOk(req)
     if (!gate.ok) return gate.response
 
     const body = await req.json().catch(() => ({}))
@@ -77,33 +78,25 @@ export async function POST(req: NextRequest) {
     const merged = await saveCredentialValues(serviceId, incoming)
 
     // 2. durable backup — sync each field to the Vercel project env vars
+    //    (plain type → readable at runtime, no redeploy needed)
     const syncedVars: string[] = []
     const failedVars: string[] = []
-    let changedEnv = false
-    let redeploy = { triggered: false, reason: 'not attempted' }
 
     if (isEnvSyncAvailable()) {
       for (const f of svc.fields) {
         const val = merged[f.id]
         if (!val) continue
         for (const ev of f.envVars) {
-          const ok = await upsertEnvVar(ev, val, f.secret)
-          if (ok) {
-            syncedVars.push(ev)
-            if (process.env[ev] !== val) changedEnv = true
-          } else {
-            failedVars.push(ev)
-          }
+          const ok = await upsertEnvVar(ev, val)
+          if (ok) syncedVars.push(ev)
+          else failedVars.push(ev)
         }
-      }
-      if (changedEnv) {
-        redeploy = await triggerRedeploy()
       }
     }
 
     await logCredentialEvent(
-      `Credential saved for ${svc.name}${syncedVars.length ? ` — synced to ${syncedVars.join(', ')}` : ''}`,
-      { service: serviceId, fields: Object.keys(incoming), envSynced: syncedVars, redeploy: redeploy.triggered },
+      `Credential saved for ${svc.name}${syncedVars.length ? ` — backed up to ${syncedVars.join(', ')}` : ''}`,
+      { service: serviceId, fields: Object.keys(incoming), envSynced: syncedVars },
     )
 
     const states = await buildServiceStates()
@@ -115,8 +108,6 @@ export async function POST(req: NextRequest) {
         available: isEnvSyncAvailable(),
         syncedVars,
         failedVars,
-        redeployTriggered: redeploy.triggered,
-        redeployReason: redeploy.reason,
       },
     })
   } catch (e) {
@@ -128,7 +119,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     await ensureSeeded()
-    const gate = pinOk(req)
+    const gate = await pinOk(req)
     if (!gate.ok) return gate.response
 
     const serviceId = String(new URL(req.url).searchParams.get('service') || '')
@@ -140,14 +131,13 @@ export async function DELETE(req: NextRequest) {
     const values = await getCredentialValues(serviceId)
     await deleteCredential(serviceId)
 
-    // Remove the env-var backup too. Always attempt every env var mapped to
-    // this service — on serverless, the request may land on an instance whose
-    // ephemeral database never saw the row, so we cannot rely on stored values
-    // to know which vars were synced. (removeEnvVar is a no-op when absent.)
+    // Remove the durable env backup too. Always attempt every env var mapped
+    // to this service (removeEnvVar is a no-op when absent) so nothing is
+    // resurrected on the next cold start.
     const removedVars: string[] = []
     if (isEnvSyncAvailable()) {
       for (const f of svc.fields) {
-        const hadValue = Boolean(values[f.id]) || f.envVars.some((ev) => process.env[ev])
+        const hadValue = Boolean(values[f.id])
         if (!hadValue) continue
         for (const ev of f.envVars) {
           if (await removeEnvVar(ev)) removedVars.push(ev)
@@ -158,12 +148,12 @@ export async function DELETE(req: NextRequest) {
     await logCredentialEvent(`Credential removed for ${svc.name}`, { service: serviceId, removedEnvVars: removedVars })
     return NextResponse.json({
       message: removedVars.length
-        ? `Removed (also removed the deployment env backup: ${removedVars.join(', ')}).`
+        ? `Removed (also removed the permanent backup: ${removedVars.join(', ')}).`
         : 'Removed from the credential vault.',
       removedVars,
     })
   } catch (e) {
     console.error('[keys] DELETE failed:', e)
-    return NextResponse.json({ error: 'delete_failed' }, { status: 500 })
+    return NextResponse.json({ error: 'delete_failed', message: 'Could not remove the credential.' }, { status: 500 })
   }
 }

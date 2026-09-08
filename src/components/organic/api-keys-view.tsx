@@ -71,8 +71,8 @@ export function ApiKeysView() {
   const [showSecret, setShowSecret] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState<Record<string, 'save' | 'test' | 'delete' | null>>({})
   const [feedback, setFeedback] = useState<Record<string, Feedback>>({})
-  const [redeployMsg, setRedeployMsg] = useState<Feedback>(null)
-  const [redeployBusy, setRedeployBusy] = useState(false)
+  const [restoreMsg, setRestoreMsg] = useState<Feedback>(null)
+  const [restoreBusy, setRestoreBusy] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -143,12 +143,13 @@ export function ApiKeysView() {
       const env = r.json?.envSync
       let text: string = r.json?.message || 'Saved.'
       if (env?.available) {
-        text += env.redeployTriggered
-          ? ' Backed up to the deployment (rebuilding now, ~2 min).'
-          : ' Backed up to the deployment env — permanent.'
-        if (env.failedVars?.length) text += ` (env sync failed for: ${env.failedVars.join(', ')})`
+        const syncedAll = !env.failedVars?.length
+        text += syncedAll
+          ? ' Backed up to the permanent env store — it survives restarts and cold starts.'
+          : ' Backed up to the permanent env store.'
+        if (env.failedVars?.length) text += ` (env backup failed for: ${env.failedVars.join(', ')})`
       } else {
-        text += ' Note: permanent deployment backup is not enabled on this server — the key lives in this server\u2019s database only.'
+        text += ' Note: the permanent backup is not enabled on this server — the key lives in this server\u2019s database only.'
       }
       setFeedback((f) => ({ ...f, [svc.id]: { kind: 'ok', text } }))
       refresh()
@@ -197,26 +198,33 @@ export function ApiKeysView() {
     }
   }
 
-  async function redeploy() {
-    setRedeployBusy(true)
-    setRedeployMsg(null)
+  async function restoreFromBackup() {
+    setRestoreBusy(true)
+    setRestoreMsg(null)
     try {
-      const r = await call('/api/keys/redeploy', { method: 'POST', body: '{}' })
-      setRedeployMsg(
-        r.json?.triggered
-          ? { kind: 'ok', text: r.json?.message || 'Redeploy triggered.' }
-          : { kind: 'err', text: r.json?.message || 'Could not trigger a redeploy.' },
+      const r = await call('/api/keys/verify', { method: 'POST', body: '{}' })
+      if (r.status === 401) {
+        setPinError('The PIN was rejected — enter it again.')
+        sessionStorage.removeItem(PIN_STORAGE_KEY)
+        setPin('')
+        return
+      }
+      setRestoreMsg(
+        r.ok
+          ? { kind: 'ok', text: r.json?.message || 'Backup restored.' }
+          : { kind: 'err', text: r.json?.message || 'Could not restore from the backup.' },
       )
+      refresh()
     } catch {
-      setRedeployMsg({ kind: 'err', text: 'Network error — try again.' })
+      setRestoreMsg({ kind: 'err', text: 'Network error — try again.' })
     } finally {
-      setRedeployBusy(false)
+      setRestoreBusy(false)
     }
   }
 
   function unlock() {
-    // verify the PIN by performing a harmless authenticated call
-    fetch('/api/keys/redeploy', {
+    // verify the PIN (the endpoint also restores any keys from the permanent backup)
+    fetch('/api/keys/verify', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-settings-pin': pinInput },
       body: '{}',
@@ -226,10 +234,10 @@ export function ApiKeysView() {
           setPinError('Wrong PIN — check it and try again.')
           return
         }
-        // 400 = pin accepted but env sync unavailable → pin is correct
         setPin(pinInput)
         sessionStorage.setItem(PIN_STORAGE_KEY, pinInput)
         setPinError('')
+        refresh()
       })
       .catch(() => setPinError('Network error — try again.'))
   }
@@ -287,38 +295,38 @@ export function ApiKeysView() {
               <p className="mt-1 text-xs">Each key is also written to this project&apos;s environment variables — storage that survives restarts and cold starts.</p>
             </div>
             <div className="rounded-lg border bg-muted/30 p-3">
-              <p className="flex items-center gap-1.5 font-medium text-foreground"><RefreshCw className="h-3.5 w-3.5" /> Auto-apply</p>
-              <p className="mt-1 text-xs">The agent reads the vault immediately. After a save, a rebuild makes the backup live for every future request.</p>
+              <p className="flex items-center gap-1.5 font-medium text-foreground"><RefreshCw className="h-3.5 w-3.5" /> Self-restoring</p>
+              <p className="mt-1 text-xs">Every new server instance restores the keys from the backup automatically — no rebuild, no waiting.</p>
             </div>
           </div>
           {data?.envSyncAvailable ? (
             <div className="flex flex-col gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-emerald-700 dark:text-emerald-300">
                 <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" />
-                Permanent storage is <b>enabled</b> on this deployment — saved keys are synced to the Vercel project env vars.
+                Permanent storage is <b>enabled</b> — saved keys are backed up to the project env store and survive restarts.
               </p>
               <Button
                 size="sm"
                 variant="outline"
                 className="h-7 shrink-0 text-xs"
-                onClick={redeploy}
-                disabled={redeployBusy || !unlocked}
+                onClick={restoreFromBackup}
+                disabled={restoreBusy || !unlocked}
               >
-                {redeployBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                Apply env backup now
+                {restoreBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                Restore keys from backup
               </Button>
             </div>
           ) : (
             <p className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2.5 text-xs text-amber-700 dark:text-amber-300">
               <XCircle className="mr-1 inline h-3.5 w-3.5" />
-              Permanent deployment backup is <b>not configured</b> on this server (missing VERCEL_TOKEN). Keys are saved in this
+              Permanent backup is <b>not configured</b> on this server (missing VERCEL_TOKEN). Keys are saved in this
               server&apos;s database only — on serverless hosting they can be lost after idle. Set VERCEL_TOKEN and VERCEL_PROJECT_ID
               to enable permanent storage.
             </p>
           )}
-          {redeployMsg && (
-            <p className={`text-xs ${redeployMsg.kind === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-              {redeployMsg.text}
+          {restoreMsg && (
+            <p className={`text-xs ${restoreMsg.kind === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+              {restoreMsg.text}
             </p>
           )}
         </CardContent>
