@@ -38,6 +38,7 @@ interface ServiceState {
 interface KeysResponse {
   pinRequired: boolean
   envSyncAvailable: boolean
+  storage?: { hosting: 'railway' | 'vercel' | 'local'; permanent: boolean; layers: string[] }
   brain: { live: boolean; provider: string | null }
   services: ServiceState[]
 }
@@ -149,8 +150,10 @@ export function ApiKeysView() {
           ? ' Backed up to the permanent env store — it survives restarts and cold starts.'
           : ' Backed up to the permanent env store.'
         if (env.failedVars?.length) text += ` (env backup failed for: ${env.failedVars.join(', ')})`
+      } else if (data?.storage?.permanent) {
+        text += ' Stored permanently — encrypted in the vault on the persistent volume.'
       } else {
-        text += ' Note: the permanent backup is not enabled on this server — the key lives in this server\u2019s database only.'
+        text += ' Note: this is a local dev server — the key lives in this server\u2019s database only.'
       }
       setFeedback((f) => ({ ...f, [svc.id]: { kind: 'ok', text } }))
       refresh()
@@ -293,7 +296,11 @@ export function ApiKeysView() {
             </div>
             <div className="rounded-lg border bg-muted/30 p-3">
               <p className="flex items-center gap-1.5 font-medium text-foreground"><HardDriveDownload className="h-3.5 w-3.5" /> Permanent backup</p>
-              <p className="mt-1 text-xs">Each key is also written to this project&apos;s environment variables — storage that survives restarts and cold starts.</p>
+              <p className="mt-1 text-xs">
+                {data?.storage?.permanent
+                  ? 'Keys also exist as deployment environment variables at the infrastructure level — an independent copy that survives even a database reset.'
+                  : 'Each key can also be written to the hosting environment variables — storage that survives restarts and cold starts.'}
+              </p>
             </div>
             <div className="rounded-lg border bg-muted/30 p-3">
               <p className="flex items-center gap-1.5 font-medium text-foreground"><RefreshCw className="h-3.5 w-3.5" /> Self-restoring</p>
@@ -317,12 +324,31 @@ export function ApiKeysView() {
                 Restore keys from backup
               </Button>
             </div>
+          ) : data?.storage?.permanent ? (
+            <div className="flex flex-col gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" />
+                Permanent storage is <b>active</b> on this server ({data.storage.hosting === 'railway' ? 'Railway' : 'hosted'}):
+                the database lives on a persistent volume and the keys are also held as deployment environment variables —
+                everything survives restarts and redeploys.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 shrink-0 text-xs"
+                onClick={restoreFromBackup}
+                disabled={restoreBusy || !unlocked}
+              >
+                {restoreBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                Restore keys from backup
+              </Button>
+            </div>
           ) : (
             <p className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2.5 text-xs text-amber-700 dark:text-amber-300">
               <XCircle className="mr-1 inline h-3.5 w-3.5" />
-              Permanent backup is <b>not configured</b> on this server (missing VERCEL_TOKEN). Keys are saved in this
-              server&apos;s database only — on serverless hosting they can be lost after idle. Set VERCEL_TOKEN and VERCEL_PROJECT_ID
-              to enable permanent storage.
+              This is a <b>local development server</b> — keys are saved in this server&apos;s database only. On the Railway
+              production deployment, storage is permanent (persistent volume + deployment environment variables) — nothing
+              needs to be configured.
             </p>
           )}
           {restoreMsg && (
@@ -420,7 +446,7 @@ export function ApiKeysView() {
                                   {fs?.set && (
                                     <span className="text-[10.5px] text-muted-foreground">
                                       current: <code className="rounded bg-muted px-1 py-0.5 font-mono">{fs.value || '••••'}</code>
-                                      {fs.envSynced && data?.envSyncAvailable && (
+                                      {fs.envSynced && (data?.envSyncAvailable || data?.storage?.permanent) && (
                                         <span className="ml-1 text-emerald-600 dark:text-emerald-400">· backed up permanently</span>
                                       )}
                                     </span>

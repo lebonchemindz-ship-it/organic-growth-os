@@ -58,10 +58,11 @@ An agentic assistant embedded in the dashboard. It is **not** a search box — i
 You no longer need the Vercel dashboard or a terminal to connect services. Open **System → API Keys** in the sidebar and paste each key once:
 
 - **Encrypted at rest** — AES-256-GCM in the app database; the UI only shows masked values (`sk-a•••f21x`).
-- **Permanent storage, no redeploys** — when `VERCEL_TOKEN` + `VERCEL_PROJECT_ID` are configured, every saved key is also written to the Vercel project's environment variables as runtime-readable values. Every new server instance **restores the vault from that backup automatically on cold start** — no rebuild, no waiting, nothing to click.
+- **Permanent storage, honest reporting** — the API Keys page reports the real storage story for the current host. On **Railway (production)** storage is permanent by design: the SQLite database lives on a **persistent volume** and the keys are also held as **deployment environment variables**; every new instance auto-imports them into the vault on boot (`Restore keys from backup` re-runs that import on demand). On Vercel, permanence comes from the project env store (`VERCEL_TOKEN` + `VERCEL_PROJECT_ID`); on a local dev server the amber note correctly says storage is this machine's database only.
 - **Immediate effect** — the Sprout agent and the LLM provider chain read the vault first, so a saved Anthropic/OpenAI key wakes the chatbot up **without any redeploy**.
 - **Test connection** — one click verifies Anthropic, OpenAI, DataForSEO (shows balance), Hunter, Supabase and Shopify keys against the live services.
 - **PIN protection** — set `SETTINGS_PIN` and the dashboard asks for it before saving/removing keys.
+- **Always-live dashboard** — every section re-fetches silently every 60 s (`useApiData` polling; server-side caches of 30 s–5 min absorb the load, so external APIs are never hammered); Live Stats additionally auto-polls every 60 s and its status every 120 s, while the manual **Refresh data** button forces an immediate live pull from Google (`&refresh=1`).
 
 Routes: `GET /api/keys` (masked states) · `POST /api/keys` (save + env backup) · `DELETE /api/keys?service=` · `POST /api/keys/test` (live connection tests, incl. Porter) · `POST /api/keys/verify` (PIN check + backup restore).
 

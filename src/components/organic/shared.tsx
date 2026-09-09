@@ -44,6 +44,17 @@ export function useApiData<T>(url: string) {
     return () => window.removeEventListener('og:data-changed', onChange)
   }, [refetch])
 
+  // Always-live data: re-fetch every 60 seconds so every section of the
+  // dashboard continuously reflects the database (and the live sources it
+  // materializes from). Safe by design — all GET endpoints have server-side
+  // caches (30s–5min) that absorb the polling, so external APIs (Porter /
+  // DataForSEO) are never hammered, yet the UI never sits on stale data for
+  // long. The refetch is silent: `loading` stays false, no skeleton flash.
+  useEffect(() => {
+    const id = window.setInterval(() => refetch(), 60_000)
+    return () => window.clearInterval(id)
+  }, [refetch])
+
   return { data, loading, error, refetch }
 }
 

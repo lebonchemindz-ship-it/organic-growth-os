@@ -97,13 +97,15 @@ export function LiveStatsView({ onNavigate, notice }: { onNavigate: (id: 'api-ke
     if (saved) setPin(saved)
   }, [])
 
-  const refreshStatus = useCallback(async () => {
+  const refreshStatus = useCallback(async (silent = false) => {
     try {
       const res = await fetch('/api/porter/status', { cache: 'no-store' })
       const json = (await res.json()) as StatusResponse
       setStatus(json)
     } catch {
-      setStatus(null)
+      // a failed background poll keeps the last known status on screen
+      // (only an explicit user-triggered refresh resets it)
+      if (!silent) setStatus(null)
     } finally {
       setStatusLoading(false)
     }
@@ -111,33 +113,56 @@ export function LiveStatsView({ onNavigate, notice }: { onNavigate: (id: 'api-ke
 
   useEffect(() => { refreshStatus() }, [refreshStatus])
 
+  // Always-live status: re-check the Porter connection every 2 minutes,
+  // silently (a transient failure keeps the last known status). The manual
+  // "Refresh accounts" button stays available for an immediate live check.
+  useEffect(() => {
+    const id = window.setInterval(() => refreshStatus(true), 120_000)
+    return () => window.clearInterval(id)
+  }, [refreshStatus])
+
   const hasAccounts = useMemo(() => {
     const a = status?.accounts
     return Boolean((a && a.gsc.length > 0) || (a && a.ga4.length > 0))
   }, [status])
 
-  const fetchStats = useCallback(async (d: number, force: boolean) => {
-    setStatsLoading(true)
-    setStatsError(null)
+  const fetchStats = useCallback(async (d: number, force: boolean, silent = false) => {
+    if (!silent) setStatsLoading(true)
+    if (!silent) setStatsError(null)
     try {
       const res = await fetch(`/api/porter/stats?days=${d}${force ? '&refresh=1' : ''}`, { cache: 'no-store' })
       const json = await res.json()
       if (!res.ok) {
-        setStatsError(json?.message || json?.error || 'Could not load live statistics.')
-        setStats(null)
+        // a silent background poll that fails keeps the current data on
+        // screen instead of blanking the section on a transient error
+        if (!silent) {
+          setStatsError(json?.message || json?.error || 'Could not load live statistics.')
+          setStats(null)
+        }
       } else {
         setStats(json as StatsResponse)
       }
     } catch {
-      setStatsError('Network error — try again.')
+      if (!silent) setStatsError('Network error — try again.')
     } finally {
-      setStatsLoading(false)
+      if (!silent) setStatsLoading(false)
     }
   }, [])
 
   useEffect(() => {
     if (status?.connected && hasAccounts) fetchStats(days, false)
     else setStats(null)
+  }, [status?.connected, hasAccounts, days, fetchStats])
+
+  // Always-live stats: poll every 60 seconds (cache-aware — the server
+  // refreshes from Google/Porter at most every 5 minutes, so external
+  // APIs are protected while the numbers stay fresh). Silent: no loading
+  // flash, and a failed poll keeps the current data on screen. The manual
+  // "Refresh data" button forces an immediate live pull from Google.
+  useEffect(() => {
+    if (!status?.connected || !hasAccounts) return
+    const id = window.setInterval(() => fetchStats(days, false, true), 60_000)
+    return () => window.clearInterval(id)
   }, [status?.connected, hasAccounts, days, fetchStats])
 
   async function callPinProtected(url: string, init: RequestInit, key: string): Promise<{ ok: boolean; status: number; json: any } | null> {
@@ -393,7 +418,7 @@ export function LiveStatsView({ onNavigate, notice }: { onNavigate: (id: 'api-ke
                       {busyK ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
                       {accounts.length > 0 ? 'Connect another account' : `Connect ${isGsc ? 'Search Console' : 'GA4'}`}
                     </Button>
-                    <Button size="sm" variant="ghost" className="h-8" onClick={refreshStatus} disabled={statusLoading}>
+                    <Button size="sm" variant="ghost" className="h-8" onClick={() => refreshStatus()} disabled={statusLoading}>
                       {statusLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                       Refresh accounts
                     </Button>

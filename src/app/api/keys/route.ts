@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ensureSeeded } from '@/lib/ensure-seed'
 import { findCredentialService } from '@/lib/credential-services'
+import { storageStatus } from '@/lib/hosting'
 import {
   buildServiceStates,
   deleteCredential,
@@ -40,6 +41,10 @@ export async function GET() {
     return NextResponse.json({
       pinRequired: Boolean(await getSettingsPin()),
       envSyncAvailable: isEnvSyncAvailable(),
+      // the honest storage story for THIS server (Railway = permanent:
+      // persistent volume + deployment env vars; the old amber warning
+      // only ever applied to serverless hosting)
+      storage: storageStatus(),
       brain,
       services,
     })
