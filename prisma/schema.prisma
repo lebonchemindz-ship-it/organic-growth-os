@@ -47,6 +47,7 @@ model Brand {
   backlinkRecords BacklinkRecord[]
   integrations    Integration[]
   tasks           Task[]
+  chatMessages    ChatMessage[]
 }
 
 // ============================================================
@@ -337,6 +338,26 @@ model Credential {
   source    String   @default("DASHBOARD") // DASHBOARD | ENV
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ============================================================
+// AGENT CHAT — persistent Sprout conversation history
+// Every user message and assistant reply is saved with the
+// tools that were executed and the LLM provider used, so the
+// conversation survives page reloads and server restarts.
+// ============================================================
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  brandId   String
+  brand     Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  role      String   // user | assistant
+  content   String
+  toolsJson String   @default("[]") // executed tool calls [{ name, args, summary, ok }]
+  provider  String   @default("") // anthropic | openai | zai | offline
+  createdAt DateTime @default(now())
+
+  @@index([brandId, createdAt])
 }
 
 // ============================================================

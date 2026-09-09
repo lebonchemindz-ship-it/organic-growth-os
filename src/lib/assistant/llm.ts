@@ -116,7 +116,9 @@ async function callZai(system: string, messages: ChatMessage[], attempt = 0): Pr
   try {
     const zai = await getZai()
     const completion = await zai.chat.completions.create({
-      messages: [{ role: 'assistant', content: system }, ...messages],
+      // system instructions must use the system role so the model treats
+      // them as binding protocol rules (not just a previous turn)
+      messages: [{ role: 'system', content: system }, ...messages],
       thinking: { type: 'disabled' },
     })
     const text = completion.choices?.[0]?.message?.content

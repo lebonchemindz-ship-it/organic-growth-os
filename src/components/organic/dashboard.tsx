@@ -11,10 +11,10 @@ import {
 } from 'recharts'
 import {
   TrendingUp, Search, Link2, Bot, FileText, Users, AlertTriangle,
-  CheckCircle2, Activity, Sparkles,
+  CheckCircle2, Activity, Sparkles, Zap, MousePointerClick, Eye, Gauge,
 } from 'lucide-react'
 import {
-  useApiData, KpiCard, SectionHeader, LoadingGrid, ErrorBox,
+  useApiData, KpiCard, SectionHeader, LoadingGrid, ErrorBox, RealnessChip,
   fmtNum, fmtDate, humanize, TrendDelta,
 } from './shared'
 
@@ -37,6 +37,7 @@ interface OverviewData {
     top3: number
     top10: number
     trackedKeywords: number
+    realTrackedKeywords?: number
     referringDomains: number
     aiMentionRate: number
     pendingOpportunities: number
@@ -46,6 +47,30 @@ interface OverviewData {
     qualifiedPublishers: number
     pendingApprovals: number
   }
+  kpiReal?: {
+    organicClicks: boolean
+    top3: boolean
+    top10: boolean
+    trackedKeywords: boolean
+    referringDomains: boolean
+    aiMentionRate: boolean
+    pendingOpportunities: boolean
+    pendingApprovals: boolean
+  }
+  live?: {
+    traffic: boolean
+    clicks: number | null
+    impressions: number | null
+    ctr: number | null
+    position: number | null
+    sessions: number | null
+    users: number | null
+    gscAccount: string | null
+    ga4Account: string | null
+    gscTopQueries: Array<{ query: string; clicks: number; impressions: number; position: number | null }>
+    range: { days: number; from: string; to: string } | null
+  }
+  realHistory?: WeeklyPoint[] | null
   autonomyMix: { GREEN: number; YELLOW: number; RED: number }
   weeklyHistory: WeeklyPoint[]
   latestReport: any
@@ -94,18 +119,64 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
     )
   }
 
-  const { brand, kpis, autonomyMix, weeklyHistory, latestReport, recentEvents } = data
-  const chartData = weeklyHistory.map((w) => ({
+  const { brand, kpis, kpiReal, live, realHistory, autonomyMix, weeklyHistory, latestReport, recentEvents } = data
+  const history = realHistory && realHistory.length > 0 ? realHistory : weeklyHistory
+  const chartData = history.map((w) => ({
     ...w,
     label: fmtDate(w.weekOf),
   }))
+  const usingRealHistory = Boolean(realHistory && realHistory.length > 0)
 
   const totalAutonomy = autonomyMix.GREEN + autonomyMix.YELLOW + autonomyMix.RED || 1
 
   return (
     <div className="space-y-6">
-      {/* Verdict banner */}
-      {latestReport ? (
+      {/* Real data banner (replaces the demo verdict card when Google is connected) */}
+      {live?.traffic ? (
+        <Card className="border-emerald-500/25 bg-gradient-to-br from-emerald-500/10 via-transparent to-transparent">
+          <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                <Zap className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="flex items-center gap-2 text-sm font-semibold">
+                  Real Google data — last {live.range?.days ?? 28} days
+                  <RealnessChip real />
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {live.gscAccount ? `Search Console: ${live.gscAccount}` : ''}
+                  {live.ga4Account ? ` · GA4: ${live.ga4Account}` : ''}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-6">
+              <div className="text-right">
+                <p className="flex items-center justify-end gap-1 text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                  <MousePointerClick className="h-4 w-4" /> {fmtNum(live.clicks ?? 0)}
+                </p>
+                <p className="text-xs text-muted-foreground">real clicks</p>
+              </div>
+              <div className="text-right">
+                <p className="flex items-center justify-end gap-1 text-2xl font-bold tabular-nums">
+                  <Eye className="h-4 w-4 text-muted-foreground" /> {fmtNum(live.impressions ?? 0)}
+                </p>
+                <p className="text-xs text-muted-foreground">impressions</p>
+              </div>
+              <div className="text-right">
+                <p className="text-2xl font-bold tabular-nums">{live.ctr !== null ? `${live.ctr}%` : '—'}</p>
+                <p className="text-xs text-muted-foreground">CTR</p>
+              </div>
+              <div className="text-right">
+                <p className="flex items-center justify-end gap-1 text-2xl font-bold tabular-nums">
+                  <Gauge className="h-4 w-4 text-muted-foreground" /> {live.position !== null ? live.position : '—'}
+                </p>
+                <p className="text-xs text-muted-foreground">avg position</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : latestReport ? (
         <Card className="border-emerald-500/25 bg-gradient-to-br from-emerald-500/10 via-transparent to-transparent">
           <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
             <div className="flex items-center gap-3">
@@ -113,8 +184,9 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
                 <TrendingUp className="h-5 w-5" />
               </div>
               <div>
-                <p className="text-sm font-semibold">
+                <p className="flex items-center gap-2 text-sm font-semibold">
                   Weekly verdict: {VERDICT_LABELS[latestReport.verdict] ?? latestReport.verdict}
+                  <RealnessChip real={false} label="Demo" />
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {DIRECTION_LABELS[latestReport.direction] ?? latestReport.direction} · week of {fmtDate(latestReport.weekOf)} · confidence {latestReport.confidenceLevel?.toLowerCase()}
@@ -140,24 +212,29 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
       {/* KPI grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiCard
-          label="Organic Clicks / wk"
+          label={live?.traffic ? 'Real Clicks / 28d' : 'Organic Clicks / wk'}
           value={fmtNum(kpis.organicClicks)}
-          sub={<TrendDelta value={kpis.clicksDelta} suffix="/wk" />}
+          sub={live?.traffic
+            ? (live.sessions !== null ? `${fmtNum(live.sessions)} GA4 sessions · ${fmtNum(live.users)} users` : 'from Google Search Console')
+            : <TrendDelta value={kpis.clicksDelta} suffix="/wk" />}
           icon={<TrendingUp className="h-4 w-4" />}
           accent={kpis.clicksDelta > 0 ? 'positive' : 'default'}
+          real={kpiReal?.organicClicks}
         />
         <KpiCard
           label="Top 3 Keywords"
           value={kpis.top3}
-          sub={`${kpis.top10} in top 10 of ${kpis.trackedKeywords}`}
+          sub={`${kpis.top10} in top 10 of ${kpis.trackedKeywords}${kpis.realTrackedKeywords ? ` (${kpis.realTrackedKeywords} real)` : ''}`}
           icon={<Search className="h-4 w-4" />}
           accent="positive"
+          real={kpiReal?.top3}
         />
         <KpiCard
           label="Referring Domains"
           value={kpis.referringDomains}
           sub="active quality backlinks"
           icon={<Link2 className="h-4 w-4" />}
+          real={kpiReal?.referringDomains}
         />
         <KpiCard
           label="AI Mention Rate"
@@ -165,12 +242,14 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
           sub="across priority LLM prompts"
           icon={<Bot className="h-4 w-4" />}
           accent={kpis.aiMentionRate >= 40 ? 'positive' : 'warning'}
+          real={kpiReal?.aiMentionRate}
         />
         <KpiCard
           label="Open Opportunities"
           value={kpis.pendingOpportunities}
           sub={`${kpis.activeOpportunities} in engine`}
           icon={<Sparkles className="h-4 w-4" />}
+          real={kpiReal?.pendingOpportunities}
         />
         <KpiCard
           label="Owner Approvals"
@@ -178,6 +257,7 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
           sub="RED actions waiting"
           icon={<AlertTriangle className="h-4 w-4" />}
           accent={kpis.pendingApprovals > 0 ? 'danger' : 'default'}
+          real={kpiReal?.pendingApprovals}
         />
       </div>
 
@@ -186,8 +266,11 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
         <Card className="lg:col-span-3">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center justify-between text-base">
-              <span>Organic clicks &amp; growth score</span>
-              <Badge variant="secondary" className="text-[10px]">8-week history</Badge>
+              <span>{usingRealHistory ? 'Real organic clicks (daily)' : 'Organic clicks & growth score'}</span>
+              <span className="flex items-center gap-2">
+                {usingRealHistory && <RealnessChip real />}
+                <Badge variant="secondary" className="text-[10px]">{usingRealHistory ? 'Google Search Console' : '8-week history'}</Badge>
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="pl-0 pr-4">
@@ -197,7 +280,9 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
                   <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} className="text-muted-foreground" tickLine={false} axisLine={false} />
                   <YAxis yAxisId="left" tick={{ fontSize: 11 }} className="text-muted-foreground" tickLine={false} axisLine={false} width={44} />
-                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} className="text-muted-foreground" tickLine={false} axisLine={false} width={30} domain={[0, 100]} />
+                  {!usingRealHistory && (
+                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} className="text-muted-foreground" tickLine={false} axisLine={false} width={30} domain={[0, 100]} />
+                  )}
                   <Tooltip
                     contentStyle={{
                       backgroundColor: 'var(--card)',
@@ -208,7 +293,9 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
                     }}
                   />
                   <Line yAxisId="left" type="monotone" dataKey="organicClicks" name="Organic clicks" stroke="var(--chart-1)" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                  <Line yAxisId="right" type="monotone" dataKey="organicGrowthScore" name="Growth score" stroke="var(--chart-2)" strokeWidth={2} strokeDasharray="5 4" dot={false} />
+                  {!usingRealHistory && (
+                    <Line yAxisId="right" type="monotone" dataKey="organicGrowthScore" name="Growth score" stroke="var(--chart-2)" strokeWidth={2} strokeDasharray="5 4" dot={false} />
+                  )}
                 </LineChart>
               </ResponsiveContainer>
             </div>

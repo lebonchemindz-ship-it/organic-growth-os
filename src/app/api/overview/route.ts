@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { ensureSeeded } from '@/lib/ensure-seed'
+import { fetchLiveStats } from '@/lib/porter-stats'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
   try {
@@ -53,18 +55,51 @@ export async function GET(req: NextRequest) {
       RED: opportunities.filter((o) => o.autonomyLevel === 'RED').length,
     }
 
+    // ---------- REAL data overlay (Google Search Console + GA4 via Porter) ----------
+    // When Porter is connected, the KPIs below switch to real Google numbers
+    // and each KPI carries a `real` flag so the UI can badge it LIVE/DEMO.
+    const keywordSources = await db.keyword.groupBy({ by: ['source'], _count: { _all: true }, where: { brandId: brand.id } })
+    const bySource = new Map(keywordSources.map((g) => [g.source, g._count._all]))
+    const realKeywordCount = (bySource.get('GSC') ?? 0) + (bySource.get('DATAFORSEO') ?? 0)
+
+    const live = await fetchLiveStats(28).catch(() => null)
+    const realTraffic = Boolean(live?.connected && (live.gsc.available || live.ga4.available))
+    const realClicks = live?.gsc.available ? live.gsc.totals.clicks : null
+    const realImpressions = live?.gsc.available ? live.gsc.totals.impressions : null
+    const realCtr = live?.gsc.available ? Number(live.gsc.totals.ctr.toFixed(2)) : null
+    const realPosition = live?.gsc.available && live.gsc.totals.position !== null ? Number(live.gsc.totals.position.toFixed(1)) : null
+    const realSessions = live?.ga4.available ? live.ga4.totals.sessions : null
+    const realUsers = live?.ga4.available ? live.ga4.totals.users : null
+
+    // real clicks series for the chart (replaces the demo weekly history
+    // when available — same shape so the UI stays simple)
+    const realHistory = realTraffic && (live?.gsc.daily?.length ?? 0) > 0
+      ? (live?.gsc.daily ?? []).map((p) => ({
+          weekOf: p.date,
+          organicClicks: p.clicks,
+          impressions: p.impressions,
+          organicGrowthScore: 0,
+          aiMentionRate: 0,
+          referringDomains: 0,
+          top10Count: 0,
+        }))
+      : null
+
     return NextResponse.json({
       brand: {
         id: brand.id, slug: brand.slug, name: brand.name, domain: brand.domain,
         status: brand.status, industry: brand.industry, baselineScore: brand.baselineScore,
       },
       kpis: {
-        organicGrowthScore: latestReport?.organicGrowthScore ?? 0,
-        scoreDirection: latestReport?.direction ?? 'FLAT',
-        organicClicks: latestReport?.organicClicks ?? 0,
+        // real GSC clicks replace the demo estimate when connected
+        organicClicks: realClicks ?? latestReport?.organicClicks ?? 0,
         clicksDelta: latestReport?.organicClicksDelta ?? 0,
-        top3, top10,
+        scoreDirection: latestReport?.direction ?? 'FLAT',
+        organicGrowthScore: latestReport?.organicGrowthScore ?? 0,
+        top3,
+        top10,
         trackedKeywords: keywordCount,
+        realTrackedKeywords: realKeywordCount,
         referringDomains: backlinks,
         aiMentionRate,
         pendingOpportunities,
@@ -74,6 +109,31 @@ export async function GET(req: NextRequest) {
         qualifiedPublishers: publisherCount,
         pendingApprovals: approvalCount,
       },
+      // which KPIs are REAL right now (drives the LIVE/DEMO chips in the UI)
+      kpiReal: {
+        organicClicks: realClicks !== null,
+        top3: realKeywordCount > 0,
+        top10: realKeywordCount > 0,
+        trackedKeywords: realKeywordCount > 0,
+        referringDomains: false,
+        aiMentionRate: false,
+        pendingOpportunities: false,
+        pendingApprovals: false,
+      },
+      live: {
+        traffic: realTraffic,
+        clicks: realClicks,
+        impressions: realImpressions,
+        ctr: realCtr,
+        position: realPosition,
+        sessions: realSessions,
+        users: realUsers,
+        gscAccount: live?.gsc.accountName ?? null,
+        ga4Account: live?.ga4.accountName ?? null,
+        gscTopQueries: live?.gsc.topQueries?.slice(0, 5) ?? [],
+        range: live?.range ?? null,
+      },
+      realHistory,
       autonomyMix,
       weeklyHistory: reports,
       latestReport,

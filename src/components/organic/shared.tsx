@@ -34,6 +34,16 @@ export function useApiData<T>(url: string) {
     refetch()
   }, [refetch])
 
+  // Live refresh: when Sprout executes a tool that mutates data
+  // (add_keywords, create_task, …) it dispatches 'og:data-changed'.
+  // Every mounted view refetches so updates appear instantly —
+  // no manual page reload needed.
+  useEffect(() => {
+    const onChange = () => refetch()
+    window.addEventListener('og:data-changed', onChange)
+    return () => window.removeEventListener('og:data-changed', onChange)
+  }, [refetch])
+
   return { data, loading, error, refetch }
 }
 
@@ -119,6 +129,27 @@ export function TypeBadge({ type }: { type: string }) {
 }
 
 // ============================================================
+// Realness chip — LIVE (real API data) vs DEMO (simulated)
+// ============================================================
+
+export function RealnessChip({ real, label }: { real: boolean; label?: string }) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        'h-4.5 shrink-0 gap-1 px-1.5 text-[9px] font-semibold uppercase tracking-wide',
+        real
+          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+          : 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+      )}
+    >
+      <span className={cn('inline-block h-1.5 w-1.5 rounded-full', real ? 'bg-emerald-500' : 'bg-amber-500')} />
+      {label ?? (real ? 'Live' : 'Demo')}
+    </Badge>
+  )
+}
+
+// ============================================================
 // Layout primitives
 // ============================================================
 
@@ -128,12 +159,15 @@ export function KpiCard({
   sub,
   icon,
   accent = 'default',
+  real,
 }: {
   label: string
   value: string | number
   sub?: React.ReactNode
   icon?: React.ReactNode
   accent?: 'default' | 'positive' | 'warning' | 'danger'
+  /** true = backed by a live API right now; false/undefined = demo estimate */
+  real?: boolean
 }) {
   const accents = {
     default: '',
@@ -146,7 +180,10 @@ export function KpiCard({
       <CardContent className="p-4 sm:p-5">
         <div className="flex items-start justify-between gap-2">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-          {icon ? <span className="text-muted-foreground/70">{icon}</span> : null}
+          <div className="flex items-center gap-1.5">
+            {real !== undefined && <RealnessChip real={real} />}
+            {icon ? <span className="text-muted-foreground/70">{icon}</span> : null}
+          </div>
         </div>
         <p className={cn('mt-2 text-2xl font-bold tabular-nums', accents[accent])}>{value}</p>
         {sub ? <div className="mt-1 text-xs text-muted-foreground">{sub}</div> : null}

@@ -10,6 +10,7 @@
 import { db } from '@/lib/db'
 import { researchKeywords } from '@/lib/dataforseo'
 import { syncGscKeywords } from '@/lib/gsc-keywords'
+import { fetchLiveStats } from '@/lib/porter-stats'
 
 export interface ToolContext {
   brandId: string
@@ -288,6 +289,64 @@ async function updateTask(args: Record<string, unknown>, ctx: ToolContext): Prom
   return { ok: true, summary: `Task "${task.title}" → ${status}`, data: { id: task.id, status: task.status, result: task.result } }
 }
 
+async function deleteTask(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const id = String(args.id || '')
+  if (!id) return { ok: false, summary: 'delete_task requires the task id (get it from list_tasks).' }
+  const existing = await db.task.findFirst({ where: { id, brandId: ctx.brandId } })
+  if (!existing) return { ok: false, summary: `Task ${id} not found for this brand.` }
+  await db.task.delete({ where: { id } })
+  await logEvent(ctx, 'TASK_DELETED', `Agent deleted task "${existing.title}"`, existing.status)
+  return { ok: true, summary: `Task "${existing.title}" deleted from the board.`, data: { id, deleted: true } }
+}
+
+// REAL statistics from Google Search Console + GA4 via the connected
+// Porter Metrics account — the only real traffic numbers in this system.
+async function getRealStats(args: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult> {
+  const days = Math.min(Math.max(Number(args.days) || 28, 7), 90)
+  const stats = await fetchLiveStats(days)
+  if (!stats.connected) {
+    return {
+      ok: false,
+      summary: 'Real stats unavailable: Porter Metrics / Google Search Console is NOT connected. The owner must open the Live Stats page and press "Connect Porter", then connect the Search Console and GA4 accounts.',
+      data: { connected: false },
+    }
+  }
+  const g = stats.gsc
+  const a = stats.ga4
+  if (!g.available && !a.available) {
+    return {
+      ok: false,
+      summary: `Porter is connected but no live data yet (GSC: ${g.reason ?? 'unavailable'}, GA4: ${a.reason ?? 'unavailable'}). The owner must connect the Search Console / GA4 accounts on the Live Stats page.`,
+      data: { connected: true, gsc: g.reason, ga4: a.reason },
+    }
+  }
+  const parts: string[] = []
+  if (g.available) {
+    parts.push(
+      `Google Search Console (last ${days} days): **${g.totals.clicks} clicks**, **${g.totals.impressions} impressions**, CTR ${g.totals.ctr.toFixed(2)}%${g.totals.position !== null ? `, average position ${g.totals.position.toFixed(1)}` : ''}${g.accountName ? ` — account: ${g.accountName}` : ''}`,
+    )
+    if (g.topQueries.length) parts.push(`Top real queries: ${g.topQueries.slice(0, 5).map(q => `${q.query} (${q.clicks} clicks${q.position !== null ? `, pos ${q.position.toFixed(1)}` : ''})`).join(', ')}`)
+    if (g.topPages.length) parts.push(`Top pages: ${g.topPages.slice(0, 3).map(p => `${p.page} (${p.clicks} clicks)`).join(' · ')}`)
+  }
+  if (a.available) {
+    parts.push(`GA4 (last ${days} days): **${a.totals.sessions} sessions**, **${a.totals.users} users**${a.accountName ? ` — account: ${a.accountName}` : ''}`)
+  }
+  return {
+    ok: true,
+    summary: parts.join(' · ') || 'Connected but no data returned.',
+    data: {
+      range: stats.range,
+      gsc: g.available
+        ? { clicks: g.totals.clicks, impressions: g.totals.impressions, ctr: Number(g.totals.ctr.toFixed(2)), position: g.totals.position !== null ? Number(g.totals.position.toFixed(1)) : null, account: g.accountName, topQueries: g.topQueries.slice(0, 5), topPages: g.topPages.slice(0, 3) }
+        : { reason: g.reason ?? 'unavailable' },
+      ga4: a.available
+        ? { sessions: a.totals.sessions, users: a.totals.users, account: a.accountName }
+        : { reason: a.reason ?? 'unavailable' },
+      real: true,
+    },
+  }
+}
+
 async function addKeywords(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const terms = Array.isArray(args.terms) ? args.terms.slice(0, 20) : []
   if (!terms.length) return { ok: false, summary: 'add_keywords requires terms: array.' }
@@ -544,6 +603,8 @@ export const TOOLS: ToolDef[] = [
   { name: 'create_task', description: 'Queue a growth task in the task board (the persistent "give the agent work" queue).', args: '{ "title": string, "description"?: string, "type"?: "KEYWORD_RESEARCH|CONTENT|OUTREACH|AUDIT|GEO|AUTHORITY|GROWTH", "priority"?: "HIGH|MEDIUM|LOW" }', execute: createTask },
   { name: 'list_tasks', description: 'Tasks in the queue with status.', args: '{ "status"?: "QUEUED|RUNNING|DONE|FAILED", "limit"?: number }', execute: listTasks },
   { name: 'update_task', description: 'Update a task status (e.g. mark DONE with a result note).', args: '{ "id": string, "status": "QUEUED|RUNNING|DONE|FAILED", "result"?: string }', execute: updateTask },
+  { name: 'delete_task', description: 'Permanently delete a task from the board (the owner can also delete tasks in the Task Board UI).', args: '{ "id": string }', execute: deleteTask },
+  { name: 'get_real_stats', description: 'REAL traffic statistics from Google Search Console + GA4 via the connected Porter Metrics account: clicks, impressions, CTR, average position, top queries, top pages, sessions and users. This is the ONLY source of real traffic numbers — use it whenever the owner asks for real stats, clicks or traffic (mark other dashboard numbers as estimates).', args: '{ "days"?: number (7-90, default 28) }', execute: getRealStats },
   { name: 'create_content_brief', description: 'Create a content item at BRIEF stage and queue the drafting task (pipeline: brief → draft → fact-check → optimize → image → link → schedule → publish).', args: '{ "title": string, "keyword"?: string, "type"?: "ARTICLE|COMPARISON|GUIDE|FAQ|PRODUCT|LANDING" }', execute: createContentBrief },
   { name: 'run_site_audit', description: 'Run a technical SEO audit of the brand domain (HTTPS, schema, sitemap, Core Web Vitals, images, internal links, IndexNow). Records an audit task with findings.', args: '{}', execute: runSiteAudit },
   { name: 'list_content', description: 'Content pipeline items with stage and performance.', args: '{}', execute: listContent },

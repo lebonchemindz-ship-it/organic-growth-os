@@ -5,6 +5,9 @@
 // and loops until the final answer (max 6 steps).
 // Falls back to a deterministic offline responder when no LLM
 // provider is configured (e.g. Vercel without keys).
+// v1.7: ALWAYS replies in English, strict execution discipline
+// (every write is followed by a verification read), and the full
+// conversation is persisted to ChatMessage (survives reloads).
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -42,6 +45,22 @@ YOUR JOB: answer questions AND take action. You are an operator, not a search bo
 asks for growth work, use the tools to read live system state and to queue/execute work
 (tasks, keyword additions, content briefs, audits, approval decisions).
 
+LANGUAGE RULE (CRITICAL): ALWAYS reply in ENGLISH — even when the user writes in Arabic,
+French or any other language. Understand every language, but answer ONLY in English.
+Keep UI terms in English.
+
+EXECUTION DISCIPLINE (CRITICAL):
+- The user's #1 requirement is that commands actually EXECUTE. NEVER just say "OK, I will do it".
+  If the user asks to add/update/delete/change anything (keywords, tasks, content, approvals),
+  you MUST call the tool that performs the write BEFORE answering.
+- After any write tool (add_keywords, research_keywords, sync_gsc_keywords, create_task,
+  update_task, delete_task, create_content_brief, decide_approval), ALWAYS call the matching
+  read tool (list_keywords / list_tasks / list_content / list_approvals) to VERIFY the change
+  landed, then report the verified result with exact counts (e.g. "the Keywords tab now shows
+  34 keywords, 12 of them real GSC queries").
+- If a write tool fails, quote its error message EXACTLY — it contains the fix (which
+  credentials page to open, which account to connect). Never pretend a failed action succeeded.
+
 LIVE DATA-SOURCE STATUS (checked moments ago — trust this, do not guess):
 ${dataSources}
 
@@ -57,15 +76,15 @@ RULES:
 - For decisions that materially change direction (spending, risky claims, link purchases), tell the user
   what you recommend and note that RED items live in the Owner Approval Queue — never fake an owner decision.
 - Never invent statistics that are not in tool results. If numbers are asked for, call a tool.
+  For REAL traffic numbers use get_real_stats (Google Search Console + GA4 via Porter) —
+  it returns the only real clicks/impressions/sessions in this system.
 - Data authenticity: keywords marked source GSC/DATAFORSEO are REAL (Search Console / DataForSEO); keywords
   marked DEMO or AGENT are estimates. The Live Stats page shows REAL GSC + GA4 numbers when connected.
   Other dashboard metrics (backlinks, AI visibility, opportunities) are demo/simulated until their APIs
   are connected — say so honestly when asked, and point to the exact fix.
 - When the owner asks for new keywords: prefer sync_gsc_keywords (real, free) then research_keywords
   (real volumes via DataForSEO). Only fall back to add_keywords with your own ideas if neither works,
-  and then say the volumes are unknown. When a data tool fails, quote its error message EXACTLY —
-  it contains the fix (e.g. which credentials page to open).
-- Reply in the SAME LANGUAGE the user writes in (Arabic → Arabic, English → English). Keep UI terms in English.
+  and then say the volumes are unknown.
 - Be concise and structured: short paragraphs, bullet lists, bold key numbers.
 - If the user asks something outside SEO/growth for the brand, briefly steer back to what you can operate.`
 }
@@ -156,6 +175,28 @@ export async function POST(req: NextRequest) {
     if (!brand) {
       return NextResponse.json({ error: 'Brand not found' }, { status: 404 })
     }
+
+    // ---------- persist the user message (chat history survives reloads) ----------
+    if (userText.trim()) {
+      await db.chatMessage.create({
+        data: { brandId: brand.id, role: 'user', content: userText.slice(0, 8000) },
+      }).catch(() => { /* history is best-effort — never block the reply */ })
+    }
+
+    /** Persist the assistant reply and return the response in one place. */
+    const finish = async (reply: string, tools: ExecutedTool[], provider: string | null) => {
+      await db.chatMessage.create({
+        data: {
+          brandId: brand.id,
+          role: 'assistant',
+          content: reply.slice(0, 8000),
+          toolsJson: JSON.stringify(tools).slice(0, 12000),
+          provider: provider || '',
+        },
+      }).catch(() => { /* history is best-effort */ })
+      return NextResponse.json({ reply, tools, provider, saved: true })
+    }
+
     const ctx: ToolContext = {
       brandId: brand.id,
       brandName: brand.name,
@@ -238,13 +279,13 @@ export async function POST(req: NextRequest) {
       }
 
       if (parsed?.action === 'final' && parsed.message) {
-        return NextResponse.json({ reply: String(parsed.message), tools: executed, provider })
+        return finish(String(parsed.message), executed, provider)
       }
 
       // Non-JSON or malformed → treat as final answer text (graceful degradation)
       const text = result.text.trim()
       if (text && !text.startsWith('{"action"')) {
-        return NextResponse.json({ reply: text, tools: executed, provider })
+        return finish(text, executed, provider)
       }
       result = await llmComplete(system, convo)
     }
@@ -253,20 +294,20 @@ export async function POST(req: NextRequest) {
       // Step limit reached (or a step failed) — force a synthesis answer
       const synthesis = await forceFinal()
       if (synthesis) {
-        return NextResponse.json({ reply: synthesis, tools: executed, provider })
+        return finish(synthesis, executed, provider)
       }
-      return NextResponse.json({
-        reply: executed.length
+      return finish(
+        executed.length
           ? `I ran ${executed.length} tool ${executed.length === 1 ? 'call' : 'calls'}:\n${executed.map(t => `• **${t.name}** — ${t.summary}`).join('\n')}\n\n(The language provider throttled me before I could compose the full answer — ask me to continue.)`
           : 'I could not complete that request — the AI provider is busy. Please try again in a moment.',
-        tools: executed,
+        executed,
         provider,
-      })
+      )
     }
 
     // ---------- offline path (no LLM provider reachable) ----------
     const offline = await offlineRespond(userText, ctx)
-    return NextResponse.json({ ...offline, provider: 'offline' })
+    return finish(offline.reply, offline.tools, 'offline')
   } catch (e) {
     console.error('[assistant] error:', e)
     return NextResponse.json(

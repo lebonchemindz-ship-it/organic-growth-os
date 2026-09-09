@@ -1,49 +1,32 @@
 'use client'
 
 // ============================================================
-// SPROUT — the Growth Agent
-// Floating AI chat panel with executable tools + a task board.
-// Chat in any language (the agent mirrors the user's language),
-// UI chrome stays English per site requirements.
+// SPROUT — the Growth Agent (floating panel)
+// Chat with executable tools + a task board with delete.
+// The conversation is PERSISTED server-side (ChatMessage) and
+// loaded on open — history survives reloads and restarts.
+// Messages can be deleted individually; the whole conversation
+// can be cleared. Replies are ALWAYS in English.
 // ============================================================
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import Markdown from 'react-markdown'
 import {
-  Bot, X, Send, ListTodo, MessageSquare, Sparkles, RefreshCw,
-  CheckCircle2, XCircle, Loader2, Wrench, ChevronDown,
+  Bot, X, Send, ListTodo, MessageSquare, Sparkles,
+  Loader2, Wrench, ChevronDown, Trash2, Eraser,
 } from 'lucide-react'
-
-interface ExecutedTool { name: string; args: Record<string, unknown>; summary: string; ok: boolean }
-
-interface ChatMsg {
-  role: 'user' | 'assistant'
-  content: string
-  tools?: ExecutedTool[]
-  provider?: string
-}
-
-interface TaskItem {
-  id: string
-  title: string
-  description: string
-  type: string
-  priority: string
-  status: string
-  source: string
-  result: string
-  createdAt: string
-}
+import { useAgentChat } from './use-agent-chat'
+import { TaskBoard } from './task-board'
 
 const SUGGESTIONS = [
-  { label: 'How is Holy Strips doing?', text: 'How is Holy Strips doing right now? Give me the overview and your top recommendation.' },
-  { label: 'Top opportunities?', text: 'Show me the top opportunities by VALUE score and what you recommend executing first.' },
+  { label: 'Real stats now', text: 'Show me the real Google Search Console stats for the last 28 days.' },
+  { label: 'Import real keywords', text: 'Import my real Search Console keywords into the Keywords tab and verify them.' },
+  { label: 'Research keywords', text: 'Research keywords around "vitamin b12 strips" and add the best ones to my keyword universe.' },
+  { label: 'How is the site doing?', text: 'How is Holy Strips doing right now? Give me the overview and your top recommendation.' },
   { label: 'Plan next content', text: 'Plan our next 3 content pieces: create briefs for the best keyword opportunities.' },
-  { label: 'Run a site audit', text: 'Run a site audit and tell me what needs fixing.' },
-  { label: 'اكتب لي ملخصاً', text: 'اكتب لي ملخصاً عن وضع الموقع وأهم 3 مهام يجب عملها هذا الأسبوع' },
 ]
 
 const PROVIDER_BADGE: Record<string, { label: string; cls: string }> = {
@@ -53,23 +36,12 @@ const PROVIDER_BADGE: Record<string, { label: string; cls: string }> = {
   offline: { label: 'Offline', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300' },
 }
 
-const STATUS_BADGE: Record<string, string> = {
-  QUEUED: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-300',
-  RUNNING: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300',
-  DONE: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
-  FAILED: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300',
-}
-
 export function AssistantPanel({ brandSlug }: { brandSlug: string }) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<'chat' | 'tasks'>('chat')
-  const [messages, setMessages] = useState<ChatMsg[]>([])
-  const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
-  const [tasks, setTasks] = useState<TaskItem[]>([])
-  const [tasksLoading, setTasksLoading] = useState(false)
-  const [provider, setProvider] = useState<string | null>(null)
   const [teaser, setTeaser] = useState(false)
+
+  const { messages, input, setInput, sending, provider, send, deleteMessage, clearAll } = useAgentChat(brandSlug)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -84,68 +56,8 @@ export function AssistantPanel({ brandSlug }: { brandSlug: string }) {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [messages, sending])
 
-  const loadTasks = useCallback(async () => {
-    setTasksLoading(true)
-    try {
-      const res = await fetch(`/api/tasks?brand=${brandSlug}`, { cache: 'no-store' })
-      if (res.ok) {
-        const json = await res.json()
-        setTasks(json.tasks || [])
-      }
-    } catch { /* ignore */ } finally {
-      setTasksLoading(false)
-    }
-  }, [brandSlug])
-
-  useEffect(() => {
-    if (open && tab === 'tasks') loadTasks()
-  }, [open, tab, loadTasks])
-
-  async function send(text?: string) {
-    const content = (text ?? input).trim()
-    if (!content || sending) return
-    setInput('')
-    setSending(true)
-    const history = [...messages, { role: 'user' as const, content }]
-    setMessages(history)
-    try {
-      const res = await fetch('/api/assistant', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          brandSlug,
-          messages: history.slice(-10).map(m => ({ role: m.role, content: m.content })),
-        }),
-      })
-      const json = await res.json()
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: json.reply || 'No response.',
-        tools: json.tools || [],
-        provider: json.provider,
-      }])
-      if (json.provider) setProvider(json.provider)
-      if (json.tools?.length) loadTasks()
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Connection error — please try again.' }])
-    } finally {
-      setSending(false)
-    }
-  }
-
-  async function updateTask(id: string, status: 'DONE' | 'FAILED') {
-    setTasks(prev => prev.map(t => (t.id === id ? { ...t, status } : t)))
-    try {
-      await fetch('/api/tasks', {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id, status }),
-      })
-    } catch { /* optimistic */ }
-  }
-
-  const openTasksCount = tasks.filter(t => t.status === 'QUEUED' || t.status === 'RUNNING').length
   const pb = provider ? PROVIDER_BADGE[provider] : null
+  const hasHistory = messages.length > 0
 
   return (
     <>
@@ -168,14 +80,14 @@ export function AssistantPanel({ brandSlug }: { brandSlug: string }) {
       </button>
 
       {/* Teaser bubble */}
-      {!open && !teaser && messages.length === 0 && (
+      {!open && !teaser && !hasHistory && (
         <button
           onClick={() => { setOpen(true); setTeaser(true) }}
           className="fixed bottom-[86px] right-5 z-50 hidden max-w-[220px] items-center gap-2 rounded-2xl rounded-br-md border bg-background px-3.5 py-2.5 text-left text-xs shadow-lg sm:flex"
         >
           <Sparkles className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
           <span className="text-muted-foreground">
-            <b className="text-foreground">Sprout</b> is ready — ask me anything or give me a growth task.
+            <b className="text-foreground">Sprout</b> is ready — I execute tasks and speak English.
           </span>
         </button>
       )}
@@ -191,7 +103,7 @@ export function AssistantPanel({ brandSlug }: { brandSlug: string }) {
             <div className="min-w-0 flex-1">
               <p className="text-sm font-bold leading-tight">Sprout · Growth Agent</p>
               <p className="truncate text-[10px] text-muted-foreground">
-                {pb ? `powered by ${pb.label}` : 'give me tasks — I execute them'}
+                {pb ? `powered by ${pb.label}` : 'I execute tasks — replies in English'}
               </p>
             </div>
             {pb && (
@@ -222,13 +134,17 @@ export function AssistantPanel({ brandSlug }: { brandSlug: string }) {
                 tab === 'tasks' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              <ListTodo className="h-3.5 w-3.5" /> Task Board
-              {openTasksCount > 0 && (
-                <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[9px] font-bold text-white">
-                  {openTasksCount}
-                </span>
-              )}
+              <ListTodo className="h-3.5 w-3.5" /> Tasks
             </button>
+            {tab === 'chat' && hasHistory && (
+              <button
+                onClick={() => { if (window.confirm('Clear the whole conversation history?')) clearAll() }}
+                className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                title="Clear conversation history"
+              >
+                <Eraser className="h-3.5 w-3.5" /> Clear
+              </button>
+            )}
           </div>
 
           {/* Chat tab */}
@@ -238,12 +154,9 @@ export function AssistantPanel({ brandSlug }: { brandSlug: string }) {
                 {messages.length === 0 && (
                   <div className="space-y-3">
                     <div className="rounded-xl border bg-muted/40 px-3.5 py-3 text-xs leading-relaxed text-muted-foreground">
-                      I'm <b className="text-foreground">Sprout</b>, the growth agent operating this OS.
-                      I can read live system state, run site audits, queue tasks, create content briefs,
-                      add keywords and execute approvals — in any language you write.
-                      <span className="mt-1.5 block text-[10px] text-amber-600 dark:text-amber-400">
-                        Note: dashboard metrics are demo data until the real APIs are connected.
-                      </span>
+                      I&apos;m <b className="text-foreground">Sprout</b>, the growth agent operating this OS.
+                      I execute commands for real (keywords, tasks, briefs, audits) and verify every change.
+                      Your messages are saved — this conversation persists. I always reply in English.
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {SUGGESTIONS.map(s => (
@@ -259,14 +172,22 @@ export function AssistantPanel({ brandSlug }: { brandSlug: string }) {
                   </div>
                 )}
 
-                {messages.map((m, i) => (
-                  <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
-                    <div className={cn('max-w-[88%]', m.role === 'user' && 'text-right')}>
+                {messages.map((m) => (
+                  <div key={m.id} className={cn('group flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+                    <div className={cn('relative max-w-[88%]', m.role === 'user' && 'text-right')}>
+                      <button
+                        onClick={() => deleteMessage(m.id)}
+                        className="absolute -right-1.5 -top-1.5 z-10 hidden h-5 w-5 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-red-500/10 hover:text-red-600 group-hover:flex dark:hover:text-red-400"
+                        aria-label="Delete message"
+                        title="Delete this message"
+                      >
+                        <Trash2 className="h-2.5 w-2.5" />
+                      </button>
                       {m.role === 'assistant' && m.tools && m.tools.length > 0 && (
                         <div className="mb-1.5 space-y-1">
                           {m.tools.map((t, j) => (
                             <div key={j} className="flex items-center gap-1.5 rounded-lg border bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground">
-                              <Wrench className="h-3 w-3 shrink-0 text-emerald-500" />
+                              <Wrench className={cn('h-3 w-3 shrink-0', t.ok ? 'text-emerald-500' : 'text-red-500')} />
                               <span className="truncate">
                                 <b className="text-foreground">{t.name}</b> — {t.summary}
                               </span>
@@ -336,65 +257,7 @@ export function AssistantPanel({ brandSlug }: { brandSlug: string }) {
           )}
 
           {/* Tasks tab */}
-          {tab === 'tasks' && (
-            <div className="flex-1 overflow-y-auto px-3 py-3">
-              <div className="mb-2 flex items-center justify-between px-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Agent task board</p>
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={loadTasks} aria-label="Refresh tasks">
-                  <RefreshCw className={cn('h-3.5 w-3.5', tasksLoading && 'animate-spin')} />
-                </Button>
-              </div>
-              {tasks.length === 0 && !tasksLoading && (
-                <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-                  No tasks yet — ask Sprout in the Chat tab to create some.
-                </p>
-              )}
-              <div className="space-y-2">
-                {tasks.map(t => (
-                  <div key={t.id} className="rounded-xl border bg-card px-3 py-2.5">
-                    <div className="flex items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[13px] font-semibold leading-snug">{t.title}</p>
-                        {t.description && (
-                          <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{t.description}</p>
-                        )}
-                      </div>
-                      <Badge variant="outline" className={cn('h-5 shrink-0 px-1.5 text-[9px]', STATUS_BADGE[t.status] || '')}>
-                        {t.status}
-                      </Badge>
-                    </div>
-                    {t.result && (
-                      <p className="mt-1.5 rounded-lg bg-emerald-500/10 px-2 py-1.5 text-[11px] leading-relaxed text-emerald-700 dark:text-emerald-300">
-                        {t.result}
-                      </p>
-                    )}
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <span className="text-[9px] font-medium uppercase text-muted-foreground">{t.type} · {t.priority} · {t.source}</span>
-                      <span className="flex-1" />
-                      {(t.status === 'QUEUED' || t.status === 'RUNNING') && (
-                        <>
-                          <button
-                            onClick={() => updateTask(t.id, 'DONE')}
-                            className="flex h-6 w-6 items-center justify-center rounded-md border text-emerald-600 transition-colors hover:bg-emerald-500/10 dark:text-emerald-400"
-                            aria-label="Mark task done"
-                          >
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => updateTask(t.id, 'FAILED')}
-                            className="flex h-6 w-6 items-center justify-center rounded-md border text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400"
-                            aria-label="Mark task failed"
-                          >
-                            <XCircle className="h-3.5 w-3.5" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {tab === 'tasks' && <TaskBoard brandSlug={brandSlug} variant="compact" />}
         </div>
       )}
     </>
