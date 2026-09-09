@@ -140,7 +140,7 @@ export async function fetchGscQueries(days = 90, limit = 1000): Promise<{ rows: 
 
 /**
  * Import the real GSC queries into the keyword universe.
- * - new queries → created (source GSC, real position + impressions)
+ * - new queries → bulk-created (source GSC, real position + impressions)
  * - existing terms → position/volume refreshed (delta kept via previousPosition)
  */
 export async function syncGscKeywords(brandId: string, brandDomain: string, days = 90): Promise<SyncResult | SyncError> {
@@ -148,52 +148,76 @@ export async function syncGscKeywords(brandId: string, brandDomain: string, days
   if (!('rows' in fetched)) return fetched as SyncError
 
   const rows = fetched.rows
+  const gscTerms = new Set(rows.map((r) => r.term))
+  const existingRows = await db.keyword.findMany({ where: { brandId, term: { in: [...gscTerms] } } })
+  const existingByTerm = new Map(existingRows.map((k) => [k.term, k]))
+
+  const toCreate: Array<Record<string, unknown>> = []
   let added = 0
   let updated = 0
   const movers: Array<{ term: string; position: number; clicks: number; delta: number }> = []
 
   for (const q of rows) {
-    const existing = await db.keyword.findFirst({ where: { brandId, term: q.term } })
+    const existing = existingByTerm.get(q.term)
     const pos = q.position && q.position > 0 ? Math.max(1, Math.round(q.position)) : 0
     const { intent, funnel, commercialValue } = classifyIntent(q.term)
 
     if (!existing) {
-      await db.keyword.create({
-        data: {
-          brandId,
-          term: q.term,
-          intent,
-          funnelStage: funnel,
-          monthlyVolume: q.impressions,
-          difficulty: 0,
-          currentPosition: pos,
-          previousPosition: 0,
-          targetUrl: '',
-          commercialValue,
-          aeoValue: /^(what|how|why|when|which|who|is|are|does|can)\b/i.test(q.term) ? 70 : 40,
-          geoValue: 35,
-          status: 'TRACKING',
-          source: 'GSC',
-        },
+      toCreate.push({
+        brandId,
+        term: q.term,
+        intent,
+        funnelStage: funnel,
+        monthlyVolume: q.impressions,
+        difficulty: 0,
+        currentPosition: pos,
+        previousPosition: 0,
+        targetUrl: '',
+        commercialValue,
+        aeoValue: /^(what|how|why|when|which|who|is|are|does|can)\b/i.test(q.term) ? 70 : 40,
+        geoValue: 35,
+        status: 'TRACKING',
+        source: 'GSC',
       })
-      added += 1
       if (q.clicks > 0 || q.position) movers.push({ term: q.term, position: pos, clicks: q.clicks, delta: 0 })
     } else {
       const delta = existing.currentPosition > 0 && pos > 0 ? existing.currentPosition - pos : 0
-      // keep real volume data when the term already has DataForSEO data
       const keepVolume = existing.source === 'DATAFORSEO' && existing.monthlyVolume > 0
-      await db.keyword.update({
-        where: { id: existing.id },
-        data: {
-          currentPosition: pos,
-          previousPosition: existing.currentPosition || 0,
-          monthlyVolume: keepVolume ? existing.monthlyVolume : q.impressions,
-          source: existing.source === 'DATAFORSEO' ? existing.source : 'GSC',
-          status: 'TRACKING',
-        },
-      })
-      updated += 1
+      const needsUpdate =
+        existing.currentPosition !== pos ||
+        (!keepVolume && existing.monthlyVolume !== q.impressions) ||
+        (existing.source !== 'DATAFORSEO' && existing.source !== 'GSC')
+      if (needsUpdate) {
+        await db.keyword.update({
+          where: { id: existing.id },
+          data: {
+            currentPosition: pos,
+            previousPosition: existing.currentPosition || 0,
+            monthlyVolume: keepVolume ? existing.monthlyVolume : q.impressions,
+            source: existing.source === 'DATAFORSEO' ? existing.source : 'GSC',
+            status: 'TRACKING',
+          },
+        })
+        updated += 1
+      }
       if (delta !== 0) movers.push({ term: q.term, position: pos, clicks: q.clicks, delta })
+    }
+  }
+
+  if (toCreate.length > 0) {
+    try {
+      await db.keyword.createMany({ data: toCreate as never, skipDuplicates: true })
+      added = toCreate.length
+    } catch {
+      // createMany unsupported / failed → per-row insert fallback
+      for (const k of toCreate) {
+        try {
+          await db.keyword.create({ data: k as never })
+          added += 1
+        } catch {
+          // duplicate or transient — skip
+        }
+      }
     }
   }
 
@@ -222,4 +246,48 @@ export async function syncGscKeywords(brandId: string, brandDomain: string, days
     updated,
     topMovers: movers.slice(0, 10),
   }
+}
+
+// ------------------------------------------------------------
+// Materialize-on-read (v1.6 architecture fix)
+// Every Vercel serverless ROUTE is a separate function with its
+// own ephemeral SQLite — writes from one function (e.g. the sync
+// route or the assistant) are invisible to the keywords route's
+// instances. The fix: the keywords route materializes the GSC
+// keyword universe directly from the SOURCE OF TRUTH (Google
+// Search Console via Porter) on read — once per instance and at
+// most every 5 minutes while warm. Real data therefore survives
+// every cold start, everywhere, without any extra database.
+// ------------------------------------------------------------
+
+const MATERIALIZED_TTL_MS = 5 * 60_000
+const materializedAt = new Map<string, number>()
+const materializing = new Map<string, Promise<void>>()
+
+/**
+ * Ensure the brand's keyword universe carries the REAL GSC queries.
+ * Fast no-op when this instance already materialized recently.
+ * Never throws — a Porter/GSC failure just leaves current data as-is.
+ */
+export async function ensureGscMaterialized(brandId: string, brandDomain: string): Promise<void> {
+  const last = materializedAt.get(brandId) ?? 0
+  if (Date.now() - last < MATERIALIZED_TTL_MS) return
+  const inFlight = materializing.get(brandId)
+  if (inFlight) return inFlight
+
+  const job = (async () => {
+    try {
+      const r = await syncGscKeywords(brandId, brandDomain, 90)
+      materializedAt.set(brandId, Date.now())
+      if (r.ok) {
+        console.log(`[gsc-keywords] materialized ${r.added} new + ${r.updated} updated GSC keywords for ${brandDomain}`)
+      }
+    } catch (e) {
+      console.error('[gsc-keywords] materialization failed:', e instanceof Error ? e.message : e)
+    } finally {
+      materializing.delete(brandId)
+    }
+  })()
+  materializing.set(brandId, job)
+  return job
 }

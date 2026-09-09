@@ -132,10 +132,10 @@ function RealDataPanel({ brandSlug, onDone }: { brandSlug: string; onDone: () =>
     setSyncing(true)
     setResult(null)
     try {
-      const res = await fetch('/api/keywords/sync-gsc', {
+      const res = await fetch('/api/keywords', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ brandSlug, days: 90 }),
+        body: JSON.stringify({ action: 'sync-gsc', brandSlug, days: 90 }),
       })
       const json = (await res.json()) as SyncResponse
       if (json.ok) {
@@ -162,10 +162,10 @@ function RealDataPanel({ brandSlug, onDone }: { brandSlug: string; onDone: () =>
     setResearching(true)
     setResult(null)
     try {
-      const res = await fetch('/api/keywords/research', {
+      const res = await fetch('/api/keywords', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ seed: seed.trim(), brandSlug, limit: 20 }),
+        body: JSON.stringify({ action: 'research', seed: seed.trim(), brandSlug, limit: 20 }),
       })
       const json = (await res.json()) as ResearchResponse
       if (json.ok) {

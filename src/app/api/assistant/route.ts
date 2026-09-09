@@ -161,6 +161,8 @@ export async function POST(req: NextRequest) {
       brandName: brand.name,
       brandDomain: brand.domain,
       brandSlug: brand.slug,
+      // funnels keyword writes through the route that owns the data
+      appOrigin: req.nextUrl.origin || `https://${req.headers.get('host') || ''}`,
     }
 
     // ---------- live data-source states (so Sprout never guesses) ----------

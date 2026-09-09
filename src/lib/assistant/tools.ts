@@ -16,6 +16,9 @@ export interface ToolContext {
   brandName: string
   brandDomain: string
   brandSlug: string
+  /** origin of this deployment — lets tools funnel writes through the
+   *  route that owns the data (serverless functions have separate DBs) */
+  appOrigin?: string
 }
 
 export interface ToolResult {
@@ -84,6 +87,39 @@ async function getOverview(_args: Record<string, unknown>, ctx: ToolContext): Pr
 
 async function listKeywords(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const limit = Math.min(Number(args.limit) || 12, 30)
+  // Funnel through the keywords route (it owns the materialized GSC universe;
+  // this function's local DB may be empty on a cold instance).
+  if (ctx.appOrigin) {
+    try {
+      const res = await fetch(`${ctx.appOrigin}/api/keywords?brand=${encodeURIComponent(ctx.brandSlug)}`, {
+        signal: AbortSignal.timeout(50_000),
+      })
+      if (res.ok) {
+        const json = (await res.json()) as { keywords?: Array<Record<string, unknown>>; summary?: Record<string, number> }
+        if (Array.isArray(json.keywords) && json.keywords.length > 0) {
+          let kws = json.keywords
+          if (typeof args.intent === 'string' && args.intent) kws = kws.filter((k) => k.intent === String(args.intent).toUpperCase())
+          if (typeof args.funnel === 'string' && args.funnel) kws = kws.filter((k) => k.funnelStage === String(args.funnel).toUpperCase())
+          if (args.maxPosition) kws = kws.filter((k) => Number(k.currentPosition) > 0 && Number(k.currentPosition) <= Number(args.maxPosition))
+          const s = json.summary || {}
+          return {
+            ok: true,
+            summary: `${kws.length} keywords (real GSC + research data, tracked positions first) — universe: ${s.total ?? kws.length} total, ${s.live ?? 0} live, ${s.top10 ?? 0} in top 10`,
+            data: kws.slice(0, limit).map((k) => ({
+              term: k.term, intent: k.intent, funnel: k.funnelStage, volume: k.monthlyVolume,
+              difficulty: k.difficulty, position: k.currentPosition || null,
+              previous: k.previousPosition || null,
+              delta: k.currentPosition && k.previousPosition ? Number(k.previousPosition) - Number(k.currentPosition) : null,
+              source: k.source,
+            })),
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[assistant:list_keywords] funnel failed:', e instanceof Error ? e.message : e)
+      // fall through to the local DB
+    }
+  }
   const where: Record<string, unknown> = { brandId: ctx.brandId }
   if (typeof args.intent === 'string' && args.intent) where.intent = args.intent.toUpperCase()
   if (typeof args.funnel === 'string' && args.funnel) where.funnelStage = args.funnel.toUpperCase()
@@ -285,17 +321,43 @@ async function addKeywords(args: Record<string, unknown>, ctx: ToolContext): Pro
 }
 
 // Real keyword research via DataForSEO (when the credentials work).
-// Returns actionable guidance when they don't.
+// Returns actionable guidance when they don't. Writes are funneled through
+// the keywords route so the dashboard sees them (separate serverless
+// functions have separate ephemeral DBs).
 async function researchKeywordsTool(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const seed = String(args.seed || '').trim()
   if (!seed) return { ok: false, summary: 'research_keywords requires a seed keyword.' }
   const limit = Math.min(Number(args.limit) || 20, 25)
+
+  if (ctx.appOrigin) {
+    try {
+      const res = await fetch(`${ctx.appOrigin}/api/keywords`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'research', seed, limit, brandSlug: ctx.brandSlug }),
+        signal: AbortSignal.timeout(55_000),
+      })
+      const json = (await res.json()) as { ok?: boolean; message?: string; error?: string; addedCount?: number; suggestions?: Array<{ term: string; volume: number; difficulty: number }> }
+      if (res.ok && json.ok) {
+        await logEvent(ctx, 'KEYWORDS_RESEARCHED', `DataForSEO research on "${seed}": ${json.addedCount ?? 0} real keywords added`, (json.suggestions || []).slice(0, 10).map(s => `${s.term} (${s.volume}/mo, KD ${s.difficulty})`).join(', '))
+        return {
+          ok: true,
+          summary: `Researched "${seed}" via DataForSEO — ${(json.suggestions || []).length} suggestions, ${json.addedCount ?? 0} added to the universe with real volumes.`,
+          data: { seed, added: json.addedCount, suggestions: (json.suggestions || []).slice(0, 10) },
+        }
+      }
+      return { ok: false, summary: `Keyword research unavailable: ${json.message || json.error || `HTTP ${res.status}`}` }
+    } catch (e) {
+      // fall through to the direct lib path
+      console.error('[assistant:research] funnel failed:', e instanceof Error ? e.message : e)
+    }
+  }
+
   const r = await researchKeywords(seed, { limit })
   if (!r.ok) {
     await logEvent(ctx, 'RESEARCH_BLOCKED', `DataForSEO research for "${seed}" failed: ${r.message}`)
     return { ok: false, summary: `Keyword research unavailable: ${r.message}`, data: { code: r.code } }
   }
-  // add the researched keywords to the universe with REAL volume + difficulty
   const added: string[] = []
   for (const s of r.suggestions.slice(0, 20)) {
     const exists = await db.keyword.findFirst({ where: { brandId: ctx.brandId, term: s.term } })
@@ -330,8 +392,33 @@ async function researchKeywordsTool(args: Record<string, unknown>, ctx: ToolCont
 }
 
 // Import the REAL queries from Google Search Console (via the connected
-// Porter Metrics account) into the keyword universe.
+// Porter Metrics account) into the keyword universe. Funneled through the
+// keywords route so the dashboard sees the result immediately.
 async function syncGscKeywordsTool(_args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  if (ctx.appOrigin) {
+    try {
+      const res = await fetch(`${ctx.appOrigin}/api/keywords`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'sync-gsc', days: 90, brandSlug: ctx.brandSlug }),
+        signal: AbortSignal.timeout(55_000),
+      })
+      const json = (await res.json()) as { ok?: boolean; message?: string; error?: string; added?: number; updated?: number; fetched?: number; accountName?: string | null; topMovers?: Array<{ term: string; position: number; clicks: number; delta: number }> }
+      if (res.ok && json.ok) {
+        await logEvent(ctx, 'GSC_SYNCED', `Imported ${json.added} new + updated ${json.updated} keywords from Search Console`, JSON.stringify((json.topMovers || []).slice(0, 5)))
+        return {
+          ok: true,
+          summary: `Synced ${json.fetched} real queries from Search Console: ${json.added} new, ${json.updated} updated.`,
+          data: { account: json.accountName, added: json.added, updated: json.updated, topMovers: json.topMovers || [] },
+        }
+      }
+      return { ok: false, summary: `Search Console sync unavailable: ${json.message || json.error || `HTTP ${res.status}`}` }
+    } catch (e) {
+      console.error('[assistant:gsc-sync] funnel failed:', e instanceof Error ? e.message : e)
+      // fall through to the direct lib path
+    }
+  }
+
   const r = await syncGscKeywords(ctx.brandId, ctx.brandDomain, 90)
   if (!r.ok) {
     await logEvent(ctx, 'GSC_SYNC_BLOCKED', `Search Console keyword sync failed: ${r.message}`)

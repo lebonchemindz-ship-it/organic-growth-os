@@ -43,8 +43,8 @@ An agentic assistant embedded in the dashboard. It is **not** a search box — i
 
 | Category | Tools |
 |---|---|
-| Read state | `get_overview` · `list_keywords` · `list_opportunities` · `list_content` · `outreach_status` · `ai_visibility` · `list_approvals` · `latest_weekly_report` |
-| Do work | `create_task` · `update_task` · `add_keywords` · `create_content_brief` · `run_site_audit` · `decide_approval` |
+| Read state | `get_overview` · `list_keywords` (real GSC data) · `list_opportunities` · `list_content` · `outreach_status` · `ai_visibility` · `list_approvals` · `latest_weekly_report` |
+| Do work | `create_task` · `update_task` · `add_keywords` · `research_keywords` (DataForSEO) · `sync_gsc_keywords` (Search Console) · `create_content_brief` · `run_site_audit` · `decide_approval` |
 | Task board | persistent Task table + `/api/tasks` (GET/PATCH) — every action it takes is logged in the brand activity feed |
 
 **How it works:** server-side agent loop (`POST /api/assistant`) — the LLM replies with either a tool call or a final answer (JSON protocol); the server executes tools against the database and loops (max 6 steps) until the answer is composed. Every write is branded, permission-checked and logged as a SystemEvent.
@@ -114,7 +114,8 @@ bun run scripts/seed.ts
 |---|---|
 | `GET /api/overview?brand=` | Dashboard KPIs, weekly history, autonomy mix, activity feed |
 | `GET /api/brands` | Brand fleet + per-brand stats |
-| `GET /api/keywords?brand=` | Keyword universe + summary |
+| `GET /api/keywords?brand=` | Keyword universe + summary (live GSC materialized on read, 5-min cache) |
+| `POST /api/keywords` | Write actions: `{action:'sync-gsc', days}` (import real GSC queries) · `{action:'research', seed, limit}` (DataForSEO volumes + difficulty) |
 | `GET /api/opportunities?brand=` | Decision engine queue (scored) |
 | `GET /api/content?brand=` | Content pipeline + stage counts |
 | `GET /api/outreach?brand=` | Publishers, sequences, backlink ledger |

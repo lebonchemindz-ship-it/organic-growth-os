@@ -1,15 +1,38 @@
+// ============================================================
+// KEYWORD UNIVERSE — /api/keywords
+// GET  → the keyword list + summary (live/demo counts).
+//        Materializes the REAL Google Search Console queries
+//        on read (source of truth = Google via Porter), so real
+//        keywords survive every cold start without a database.
+// POST → { action: 'sync-gsc' | 'research', ... } — write actions
+//        live in THIS route (one serverless function = one DB
+//        shared with the GET above, so the UI sees them
+//        immediately).
+// ============================================================
+
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { ensureSeeded } from '@/lib/ensure-seed'
+import { ensureGscMaterialized, syncGscKeywords } from '@/lib/gsc-keywords'
+import { researchKeywords } from '@/lib/dataforseo'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
+async function loadBrand(brandSlug: string) {
+  return db.brand.findUnique({ where: { slug: brandSlug } })
+}
 
 export async function GET(req: NextRequest) {
   try {
     await ensureSeeded()
     const brandSlug = req.nextUrl.searchParams.get('brand') || 'holy_strips'
-    const brand = await db.brand.findUnique({ where: { slug: brandSlug } })
+    const brand = await loadBrand(brandSlug)
     if (!brand) return NextResponse.json({ error: 'Brand not found' }, { status: 404 })
+
+    // real GSC keywords materialized from the source of truth (fast no-op
+    // when this instance did it within the last 5 minutes)
+    await ensureGscMaterialized(brand.id, brand.domain)
 
     const keywords = await db.keyword.findMany({
       where: { brandId: brand.id },
@@ -37,5 +60,107 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     console.error('keywords error', e)
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    await ensureSeeded()
+    const body = await req.json().catch(() => ({}))
+    const action = String(body.action || '')
+    const brandSlug = String(body.brandSlug || 'holy_strips')
+    const brand = await loadBrand(brandSlug)
+    if (!brand) return NextResponse.json({ error: 'brand_not_found', message: 'Brand not found.' }, { status: 404 })
+
+    if (action === 'sync-gsc') {
+      const days = Math.min(Math.max(Number(body.days) || 90, 7), 90)
+      const result = await syncGscKeywords(brand.id, brand.domain, days)
+      if (!result.ok) {
+        const status = result.code === 'not_connected' ? 400 : 502
+        return NextResponse.json({ error: result.code, message: result.message }, { status })
+      }
+      return NextResponse.json(result)
+    }
+
+    if (action === 'research') {
+      const seed = String(body.seed || '').trim().slice(0, 120)
+      const autoAdd = body.autoAdd !== false
+      const limit = Math.min(Math.max(Number(body.limit) || 20, 5), 25)
+      const locationName = String(body.locationName || 'United States').trim().slice(0, 60)
+      if (!seed) {
+        return NextResponse.json({ error: 'no_seed', message: 'Provide a seed keyword to research.' }, { status: 400 })
+      }
+
+      const outcome = await researchKeywords(seed, { limit, locationName })
+      if (!outcome.ok) {
+        return NextResponse.json(
+          { error: outcome.code, message: outcome.message, statusCode: outcome.statusCode ?? null },
+          { status: outcome.code === 'invalid_credentials' ? 401 : 502 },
+        )
+      }
+
+      let addedCount = 0
+      let enriched = 0
+      if (autoAdd) {
+        for (const s of outcome.suggestions.slice(0, 20)) {
+          const exists = await db.keyword.findFirst({ where: { brandId: brand.id, term: s.term } })
+          if (exists) {
+            await db.keyword.update({
+              where: { id: exists.id },
+              data: {
+                monthlyVolume: s.volume || exists.monthlyVolume,
+                difficulty: s.difficulty || exists.difficulty,
+                source: exists.source === 'GSC' ? 'GSC' : 'DATAFORSEO',
+              },
+            })
+            enriched += 1
+            continue
+          }
+          await db.keyword.create({
+            data: {
+              brandId: brand.id,
+              term: s.term,
+              intent: s.intent,
+              funnelStage: s.funnel,
+              monthlyVolume: s.volume,
+              difficulty: s.difficulty,
+              commercialValue: s.intent === 'TRANSACTIONAL' ? 80 : s.intent === 'COMMERCIAL' ? 60 : 30,
+              aeoValue: 45,
+              geoValue: 40,
+              status: 'TRACKING',
+              source: 'DATAFORSEO',
+            },
+          })
+          addedCount += 1
+        }
+        try {
+          await db.systemEvent.create({
+            data: {
+              brandId: brand.id,
+              type: 'CREDENTIAL',
+              level: 'INFO',
+              message: `[KEYWORD_RESEARCH] Researched "${seed}" via DataForSEO — ${addedCount} new keywords added`,
+              meta: `location=${locationName} suggestions=${outcome.suggestions.length}`,
+            },
+          })
+        } catch {
+          // logging is best-effort
+        }
+      }
+
+      return NextResponse.json({
+        ok: true,
+        seed,
+        locationName,
+        suggestions: outcome.suggestions,
+        addedCount,
+        enriched,
+      })
+    }
+
+    return NextResponse.json({ error: 'unknown_action', message: 'Use action: "sync-gsc" or "research".' }, { status: 400 })
+  } catch (e) {
+    console.error('[keywords] POST failed:', e)
+    return NextResponse.json({ error: 'keyword_action_failed', message: 'The keyword action failed with an internal error.' }, { status: 500 })
   }
 }
