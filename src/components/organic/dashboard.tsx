@@ -280,7 +280,7 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
           label="Open Opportunities"
           value={kpis.pendingOpportunities}
           sub={kpiReal?.pendingOpportunities
-            ? `${kpis.activeOpportunities} in engine · from live GSC data`
+            ? `${kpis.activeOpportunities} in engine · ${kpis.pendingOpportunities} open now · from live GSC data`
             : 'engine runs after keyword sync'}
           icon={<Sparkles className="h-4 w-4" />}
           real={kpiReal?.pendingOpportunities}
@@ -288,7 +288,9 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
         <KpiCard
           label="Owner Approvals"
           value={kpis.pendingApprovals}
-          sub={kpiReal?.pendingApprovals ? 'RED actions waiting' : 'engine files RED actions here'}
+          sub={kpiReal?.pendingApprovals
+            ? (kpis.pendingApprovals > 0 ? 'RED actions waiting for your decision' : 'all RED actions handled — engine keeps watching')
+            : 'engine files RED actions here'}
           icon={<AlertTriangle className="h-4 w-4" />}
           accent={kpis.pendingApprovals > 0 ? 'danger' : 'default'}
           real={kpiReal?.pendingApprovals}

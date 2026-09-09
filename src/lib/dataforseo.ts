@@ -233,7 +233,7 @@ export async function fetchBacklinksSummary(domain: string, force = false): Prom
 }
 
 // ------------------------------------------------------------
-// BULK KEYWORD METRICS — Labs "Bulk Keyword Search Volume" +
+// BULK KEYWORD METRICS — Labs "Bulk Search Volume" +
 // "Bulk Keyword Difficulty" endpoints. Fills the REAL Volume &
 // Difficulty columns for tracked GSC keywords in two cheap
 // batched calls (up to 1000 keywords per request each).
@@ -328,13 +328,18 @@ async function bulkCall(
 }
 
 /**
- * Real volume + difficulty for up to 1000 exact keywords via two
- * Labs bulk endpoints. Failures of one endpoint never block the
- * other; every outcome carries the exact cost so the caller can
- * stay honest about what was spent.
+ * Real metrics for exact keywords via two Labs bulk endpoints:
+ *   • /google/bulk_search_volume/live         → search volume
+ *   • /google/bulk_keyword_difficulty/live    → difficulty
+ * Pass ONLY the terms you are missing each metric for — every
+ * term is billed, already-enriched keywords are never re-charged.
+ * Failures of one endpoint never block the other; every outcome
+ * carries the exact cost so the caller can stay honest about
+ * what was spent.
  */
 export async function fetchBulkKeywordMetrics(
-  terms: string[],
+  volumeTerms: string[],
+  difficultyTerms: string[],
   opts: { locationName?: string; languageName?: string } = {},
 ): Promise<BulkMetricsOutcome> {
   const metrics = new Map<string, BulkKeywordMetric>()
@@ -352,35 +357,39 @@ export async function fetchBulkKeywordMetrics(
     }
   }
   const cfg = await getDataForSeoConfig()
-  if (!cfg || terms.length === 0) {
+  if (!cfg || (volumeTerms.length === 0 && difficultyTerms.length === 0)) {
     return { ok: false, metrics, volumeCount: 0, difficultyCount: 0, cost: 0, messages: [cfg ? 'No keywords to enrich.' : 'No DataForSEO credentials saved.'] }
   }
 
   const locationName = (opts.locationName || 'United States').trim()
   const languageName = (opts.languageName || 'English').trim()
 
-  const volume = await bulkCall('/v3/dataforseo_labs/google/bulk_keyword_search_volume/live', cfg, terms, locationName, languageName)
-  cost += volume.cost
-  if (volume.message) messages.push(volume.message)
-  for (const item of volume.items) {
-    const kw = typeof item.keyword === 'string' ? item.keyword.toLowerCase() : ''
-    if (!kw) continue
-    const entry = metrics.get(kw) ?? { volume: 0, difficulty: 0 }
-    entry.volume = volumeOf(item)
-    metrics.set(kw, entry)
+  if (volumeTerms.length > 0) {
+    const volume = await bulkCall('/v3/dataforseo_labs/google/bulk_search_volume/live', cfg, volumeTerms, locationName, languageName)
+    cost += volume.cost
+    if (volume.message) messages.push(volume.message)
+    for (const item of volume.items) {
+      const kw = typeof item.keyword === 'string' ? item.keyword.toLowerCase() : ''
+      if (!kw) continue
+      const entry = metrics.get(kw) ?? { volume: 0, difficulty: 0 }
+      entry.volume = volumeOf(item)
+      metrics.set(kw, entry)
+    }
   }
 
-  const difficulty = await bulkCall('/v3/dataforseo_labs/google/bulk_keyword_difficulty/live', cfg, terms, locationName, languageName)
-  cost += difficulty.cost
-  if (difficulty.message) messages.push(difficulty.message)
-  for (const item of difficulty.items) {
-    const kw = typeof item.keyword === 'string' ? item.keyword.toLowerCase() : ''
-    if (!kw) continue
-    const kd = num(item.keyword_difficulty)
-    if (kd === null) continue
-    const entry = metrics.get(kw) ?? { volume: 0, difficulty: 0 }
-    entry.difficulty = Math.max(0, Math.min(100, Math.round(kd)))
-    metrics.set(kw, entry)
+  if (difficultyTerms.length > 0) {
+    const difficulty = await bulkCall('/v3/dataforseo_labs/google/bulk_keyword_difficulty/live', cfg, difficultyTerms, locationName, languageName)
+    cost += difficulty.cost
+    if (difficulty.message) messages.push(difficulty.message)
+    for (const item of difficulty.items) {
+      const kw = typeof item.keyword === 'string' ? item.keyword.toLowerCase() : ''
+      if (!kw) continue
+      const kd = num(item.keyword_difficulty)
+      if (kd === null) continue
+      const entry = metrics.get(kw) ?? { volume: 0, difficulty: 0 }
+      entry.difficulty = Math.max(0, Math.min(100, Math.round(kd)))
+      metrics.set(kw, entry)
+    }
   }
 
   const volumeCount = [...metrics.values()].filter((m) => m.volume > 0).length

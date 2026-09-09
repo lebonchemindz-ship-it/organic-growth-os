@@ -176,16 +176,17 @@ export async function POST(req: NextRequest) {
       const limit = Math.min(Math.max(Number(body.limit) || 300, 10), 1000)
       const locationName = String(body.locationName || 'United States').trim().slice(0, 60)
 
+      // keywords missing EITHER metric, most visible first; each one
+      // is only billed for the metric it is still missing
       const targets = await db.keyword.findMany({
         where: {
           brandId: brand.id,
-          monthlyVolume: 0,
-          difficulty: 0,
+          OR: [{ monthlyVolume: 0 }, { difficulty: 0 }],
           source: { in: ['GSC', 'DATAFORSEO'] },
         },
         orderBy: [{ impressions: 'desc' }, { clicks: 'desc' }],
         take: limit,
-        select: { id: true, term: true },
+        select: { id: true, term: true, monthlyVolume: true, difficulty: true },
       })
       if (targets.length === 0) {
         return NextResponse.json({
@@ -194,8 +195,10 @@ export async function POST(req: NextRequest) {
           message: 'Every tracked keyword already carries real DataForSEO volume & difficulty.',
         })
       }
+      const volumeTerms = targets.filter((t) => t.monthlyVolume === 0).map((t) => t.term)
+      const difficultyTerms = targets.filter((t) => t.difficulty === 0).map((t) => t.term)
 
-      const outcome = await fetchBulkKeywordMetrics(targets.map((t) => t.term), { locationName })
+      const outcome = await fetchBulkKeywordMetrics(volumeTerms, difficultyTerms, { locationName })
       if (!outcome.ok && outcome.metrics.size === 0) {
         const status = outcome.messages[0]?.includes('40100') ? 401 : 502
         return NextResponse.json({
@@ -210,20 +213,21 @@ export async function POST(req: NextRequest) {
       for (const t of targets) {
         const m = outcome.metrics.get(t.term.toLowerCase())
         if (!m) continue
-        if (m.volume <= 0 && m.difficulty <= 0) continue
-        if (m.volume > 0) withVolume += 1
-        if (m.difficulty > 0) withDifficulty += 1
-        await db.keyword.update({
-          where: { id: t.id },
-          data: {
-            monthlyVolume: m.volume,
-            difficulty: m.difficulty,
-          },
-        })
+        const data: { monthlyVolume?: number; difficulty?: number } = {}
+        if (t.monthlyVolume === 0 && m.volume > 0) {
+          data.monthlyVolume = m.volume
+          withVolume += 1
+        }
+        if (t.difficulty === 0 && m.difficulty > 0) {
+          data.difficulty = m.difficulty
+          withDifficulty += 1
+        }
+        if (Object.keys(data).length === 0) continue
+        await db.keyword.update({ where: { id: t.id }, data })
       }
 
       const remaining = await db.keyword.count({
-        where: { brandId: brand.id, monthlyVolume: 0, difficulty: 0, source: { in: ['GSC', 'DATAFORSEO'] } },
+        where: { brandId: brand.id, OR: [{ monthlyVolume: 0 }, { difficulty: 0 }], source: { in: ['GSC', 'DATAFORSEO'] } },
       })
 
       try {

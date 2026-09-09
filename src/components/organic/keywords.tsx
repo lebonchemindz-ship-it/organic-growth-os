@@ -349,9 +349,9 @@ export function KeywordsView({ brandSlug }: { brandSlug: string }) {
           <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
             <span className="font-medium">Volume & Difficulty are hidden until real data exists.</span>{' '}
-            They require the DataForSEO API — add your API login &amp; password on the API Keys page and they
-            will appear with real numbers only. Positions, impressions and clicks come from your live
-            Google Search Console connection.
+            They come from the DataForSEO API — press “Enrich volume &amp; difficulty” above (or add your API
+            login &amp; password on the API Keys page) and they will appear with real numbers only. Positions,
+            impressions and clicks come from your live Google Search Console connection.
           </span>
         </div>
       )}

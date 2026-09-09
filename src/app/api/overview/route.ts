@@ -87,6 +87,9 @@ export async function GET(req: NextRequest) {
     const pendingRealOpps = await db.opportunity.count({
       where: { brandId: brand.id, status: { in: ['DISCOVERED', 'VERIFIED', 'PRIORITIZED', 'APPROVAL_REQUIRED'] }, source: 'GSC' },
     })
+    // any real GSC-sourced opportunity in the engine (open or already
+    // scheduled) makes this KPI real — the number itself stays the OPEN count
+    const realEngineOpps = await db.opportunity.count({ where: { brandId: brand.id, source: 'GSC' } })
     const engineApprovals = await db.approvalItem.count({ where: { brandId: brand.id, source: 'ENGINE' } })
     const realClicks = live?.gsc.available ? live.gsc.totals.clicks : null
     const realImpressions = live?.gsc.available ? live.gsc.totals.impressions : null
@@ -141,7 +144,7 @@ export async function GET(req: NextRequest) {
         trackedKeywords: realKeywordCount > 0,
         referringDomains: realReferringDomains,
         aiMentionRate: llmPrompts.length > 0,
-        pendingOpportunities: pendingRealOpps > 0,
+        pendingOpportunities: pendingRealOpps > 0 || realEngineOpps > 0,
         pendingApprovals: engineApprovals > 0,
       },
       // honest context for the KPI cards (what backs each number)
