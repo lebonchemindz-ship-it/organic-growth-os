@@ -1,13 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet'
 import {
   LayoutDashboard, Sparkles, Search, FileText, Users, Bot, ShieldAlert,
   Plug, Building2, FileBarChart, TerminalSquare, KeyRound, Menu, Sprout,
-  Activity, FlaskConical, X, ScrollText,
+  Activity, FlaskConical, X, ScrollText, BarChart3,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { DashboardView } from '@/components/organic/dashboard'
@@ -23,11 +23,12 @@ import { ReportsView } from '@/components/organic/reports'
 import { MasterPromptView } from '@/components/organic/master-prompt-view'
 import { ApisView } from '@/components/organic/apis-view'
 import { ApiKeysView } from '@/components/organic/api-keys-view'
+import { LiveStatsView } from '@/components/organic/live-stats'
 import { useApiData } from '@/components/organic/shared'
 import { AssistantPanel } from '@/components/organic/assistant-panel'
 
 type SectionId =
-  | 'dashboard' | 'opportunities' | 'keywords' | 'content' | 'outreach'
+  | 'dashboard' | 'live-stats' | 'opportunities' | 'keywords' | 'content' | 'outreach'
   | 'ai' | 'approvals' | 'reports' | 'brands' | 'integrations' | 'master' | 'apis' | 'api-keys'
 
 const NAV: Array<{ group: string; items: Array<{ id: SectionId; label: string; icon: React.ReactNode }> }> = [
@@ -35,6 +36,7 @@ const NAV: Array<{ group: string; items: Array<{ id: SectionId; label: string; i
     group: 'Operate',
     items: [
       { id: 'dashboard', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
+      { id: 'live-stats', label: 'Live Stats', icon: <BarChart3 className="h-4 w-4" /> },
       { id: 'opportunities', label: 'Opportunities', icon: <Sparkles className="h-4 w-4" /> },
       { id: 'keywords', label: 'Keywords', icon: <Search className="h-4 w-4" /> },
       { id: 'content', label: 'Content Engine', icon: <FileText className="h-4 w-4" /> },
@@ -63,6 +65,7 @@ const NAV: Array<{ group: string; items: Array<{ id: SectionId; label: string; i
 
 const SECTION_META: Record<SectionId, { title: string; sub: string }> = {
   dashboard: { title: 'Overview', sub: 'The operating system at a glance' },
+  'live-stats': { title: 'Live Stats', sub: 'Real GSC + GA4 statistics — direct or via Porter Metrics' },
   opportunities: { title: 'Opportunities', sub: 'Decision & autonomy engine' },
   keywords: { title: 'Keywords', sub: 'The keyword universe' },
   content: { title: 'Content Engine', sub: 'From brief to refresh' },
@@ -117,6 +120,42 @@ export default function Home() {
   const [brandSlug, setBrandSlug] = useState('holy_strips')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [demoBannerDismissed, setDemoBannerDismissed] = useState(false)
+  const [porterNotice, setPorterNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  // Porter OAuth return: /?porter=connected | ?porter=error&reason=…
+  // Runs once on mount after a full page navigation (external system → state sync).
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const result = params.get('porter')
+    if (!result) return
+    let notice: { kind: 'ok' | 'err'; text: string }
+    if (result === 'connected') {
+      notice = {
+        kind: 'ok',
+        text: 'Porter Metrics connected — your Google account links are now one click away. Connect Search Console and GA4 below to load live statistics.',
+      }
+    } else {
+      const reason = params.get('reason') || 'unknown'
+      const friendly: Record<string, string> = {
+        registration_failed: 'Porter client registration failed — check your connection and try again.',
+        state_mismatch: 'The login session expired or was reused — press Connect Porter again.',
+        expired_login_session: 'The login attempt took too long — press Connect Porter again.',
+        token_exchange_failed: 'Porter rejected the login code — press Connect Porter again.',
+        missing_code: 'Porter did not return a login code — press Connect Porter again.',
+        access_denied: 'The Porter login was cancelled.',
+        internal_error: 'An unexpected error occurred — try again.',
+      }
+      notice = { kind: 'err', text: friendly[reason] || `Porter login failed (${reason}).` }
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time URL-param handoff after OAuth redirect navigation
+    setPorterNotice(notice)
+    setSection('live-stats')
+    params.delete('porter')
+    params.delete('reason')
+    const qs = params.toString()
+    window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`)
+  }, [])
 
   const { data: brandsData } = useApiData<BrandsListData>('/api/brands')
   const activeBrand = brandsData?.brands.find((b) => b.slug === brandSlug)
@@ -124,6 +163,7 @@ export default function Home() {
   function navigate(id: SectionId) {
     setSection(id)
     setMobileNavOpen(false)
+    if (id !== 'live-stats') setPorterNotice(null)
   }
 
   const meta = SECTION_META[section]
@@ -231,6 +271,7 @@ export default function Home() {
               </div>
             )}
             {section === 'dashboard' && <DashboardView brandSlug={brandSlug} />}
+            {section === 'live-stats' && <LiveStatsView onNavigate={navigate} notice={porterNotice} />}
             {section === 'opportunities' && <OpportunitiesView brandSlug={brandSlug} />}
             {section === 'keywords' && <KeywordsView brandSlug={brandSlug} />}
             {section === 'content' && <ContentView brandSlug={brandSlug} />}

@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { ensureSeeded } from '@/lib/ensure-seed'
 import { findCredentialService } from '@/lib/credential-services'
 import { getCredentialValues, getSettingsPin } from '@/lib/credentials'
+import { testPorterConnection } from '@/lib/porter-mcp'
 
 export const dynamic = 'force-dynamic'
 
@@ -123,6 +124,22 @@ async function testShopify(values: Record<string, string>): Promise<TestOutcome>
   return { ok: null, message: `Shopify responded with HTTP ${res.status} — token not confirmed.` }
 }
 
+async function testPorter(values: Record<string, string>): Promise<TestOutcome> {
+  const token = values.accessToken
+  if (!token) return { ok: null, message: 'Not connected yet — press “Connect Porter” on the Live Stats page (fields here are filled automatically).' }
+  const r = await testPorterConnection()
+  if (r.ok) {
+    const data = r.data as Record<string, unknown> | null
+    const user = (data && typeof data === 'object' && typeof data.user === 'object' ? data.user : data) as Record<string, unknown> | null
+    const email = user && typeof user.email === 'string' ? user.email : ''
+    return { ok: true, message: `Connected — the Porter MCP session is live${email ? ` as ${email}` : ''}.` }
+  }
+  if (r.error?.status === 401 || r.error?.hint === 'reconnect') {
+    return { ok: false, message: 'The Porter token was rejected — press “Connect Porter” on the Live Stats page to log in again.' }
+  }
+  return { ok: null, message: r.error?.message || 'Could not reach the Porter MCP server (network/timeout).' }
+}
+
 const TESTERS: Record<string, (v: Record<string, string>) => Promise<TestOutcome>> = {
   anthropic: testAnthropic,
   openai: testOpenai,
@@ -130,6 +147,7 @@ const TESTERS: Record<string, (v: Record<string, string>) => Promise<TestOutcome
   hunter: testHunter,
   supabase: testSupabase,
   shopify: testShopify,
+  porter: testPorter,
 }
 
 export async function POST(req: NextRequest) {
