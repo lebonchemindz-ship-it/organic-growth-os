@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
       db.keyword.count({ where: { brandId: brand.id, currentPosition: { gte: 1, lte: 3 } } }),
       db.keyword.count({ where: { brandId: brand.id, currentPosition: { gte: 1, lte: 10 } } }),
       db.opportunity.count({ where: { brandId: brand.id } }),
-      db.opportunity.count({ where: { brandId: brand.id, status: { in: ['DISCOVERED', 'VERIFIED', 'PRIORITIZED'] } } }),
+      db.opportunity.count({ where: { brandId: brand.id, status: { in: ['DISCOVERED', 'VERIFIED', 'PRIORITIZED', 'APPROVAL_REQUIRED'] } } }),
       db.contentItem.count({ where: { brandId: brand.id } }),
       db.contentItem.count({ where: { brandId: brand.id, stage: { in: ['PUBLISHED', 'MONITORING'] } } }),
       db.publisher.count({ where: { brandId: brand.id } }),
@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
       ? llmPrompts.reduce((max, p) => (p.lastCheckedAt > max ? p.lastCheckedAt : max), llmPrompts[0].lastCheckedAt)
       : null
     const pendingRealOpps = await db.opportunity.count({
-      where: { brandId: brand.id, status: { in: ['DISCOVERED', 'VERIFIED', 'PRIORITIZED'] }, source: 'GSC' },
+      where: { brandId: brand.id, status: { in: ['DISCOVERED', 'VERIFIED', 'PRIORITIZED', 'APPROVAL_REQUIRED'] }, source: 'GSC' },
     })
     const engineApprovals = await db.approvalItem.count({ where: { brandId: brand.id, source: 'ENGINE' } })
     const realClicks = live?.gsc.available ? live.gsc.totals.clicks : null
