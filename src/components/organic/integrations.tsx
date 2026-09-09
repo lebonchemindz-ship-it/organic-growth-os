@@ -16,6 +16,7 @@ interface Integration {
   purpose: string
   scope: string
   status: string
+  note?: string | null
   docsUrl: string
   apiKeyEnvVar: string
   connectedAt: string | null
@@ -108,7 +109,13 @@ export function IntegrationsView() {
                       <code className="rounded bg-muted px-1 py-0.5 font-mono">{i.apiKeyEnvVar}</code>
                     </span>
                   ) : null}
-                  {i.connectedAt ? <span>connected {fmtDate(i.connectedAt)}</span> : <span>not connected yet</span>}
+                  {i.note ? (
+                    <span className={i.status === 'CONNECTED' ? 'text-emerald-600 dark:text-emerald-400' : ''}>{i.note}</span>
+                  ) : i.connectedAt ? (
+                    <span>connected {fmtDate(i.connectedAt)}</span>
+                  ) : (
+                    <span>not connected yet</span>
+                  )}
                   {i.docsUrl ? (
                     <a
                       href={i.docsUrl}

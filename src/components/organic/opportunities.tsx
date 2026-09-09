@@ -129,7 +129,23 @@ export function OpportunitiesView({ brandSlug }: { brandSlug: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((o) => (
+              {filtered.length === 0 ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="py-12">
+                    <div className="flex flex-col items-center justify-center gap-2 text-center">
+                      <Sparkles className="h-8 w-8 text-muted-foreground/40" />
+                      <p className="text-sm font-semibold">No opportunities in the queue yet</p>
+                      <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
+                        Opportunities are real, data-backed actions — never placeholder ideas. They appear
+                        here once the Growth Agent analyzes your Search Console data and site. Ask it to
+                        “find growth opportunities from my Search Console data” to populate this queue
+                        with actions grounded in your real rankings.
+                      </p>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filtered.map((o) => (
                 <TableRow
                   key={o.id}
                   className="cursor-pointer"
@@ -164,7 +180,8 @@ export function OpportunitiesView({ brandSlug }: { brandSlug: string }) {
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </TableCell>
                 </TableRow>
-              ))}
+                ))
+              )}
             </TableBody>
           </Table>
         </ScrollArea>

@@ -122,7 +122,23 @@ export function AiVisibilityView({ brandSlug }: { brandSlug: string }) {
                 </tr>
               </thead>
               <tbody>
-                {data.prompts.map((p) => {
+                {data.prompts.length === 0 ? (
+                  <tr className="border-b border-border/50">
+                    <td colSpan={9} className="px-4 py-12">
+                      <div className="flex flex-col items-center justify-center gap-2 text-center">
+                        <Bot className="h-8 w-8 text-muted-foreground/40" />
+                        <p className="text-sm font-semibold">No AI queries tracked yet</p>
+                        <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
+                          This tracker shows where your brand is actually mentioned by ChatGPT, Perplexity,
+                          Gemini, Claude and Copilot. Ask the Growth Agent to build your priority
+                          AI-query universe from your real keywords — prompt rows appear only once
+                          they are genuinely tracked.
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                data.prompts.map((p) => {
                   const anyMention = ENGINES.some((e) => p[e.key])
                   return (
                     <tr key={p.id} className={`border-b border-border/50 ${anyMention ? '' : 'opacity-75'}`}>
@@ -156,7 +172,8 @@ export function AiVisibilityView({ brandSlug }: { brandSlug: string }) {
                       <td className="px-4 py-3 text-xs tabular-nums text-muted-foreground">{fmtDate(p.lastCheckedAt)}</td>
                     </tr>
                   )
-                })}
+                })
+              )}
               </tbody>
             </table>
           </div>

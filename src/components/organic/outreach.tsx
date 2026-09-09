@@ -108,7 +108,20 @@ export function OutreachView({ brandSlug }: { brandSlug: string }) {
 
         <TabsContent value="publishers" className="mt-4">
           <div className="grid gap-3 md:grid-cols-2">
-            {data.publishers.map((p) => (
+            {data.publishers.length === 0 ? (
+              <Card className="border-dashed md:col-span-2">
+                <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-center">
+                  <Users className="h-8 w-8 text-muted-foreground/40" />
+                  <p className="text-sm font-semibold">No publishers prospected yet</p>
+                  <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
+                    The publisher pipeline fills with real, qualified prospects — never placeholder
+                    contacts. Ask the Growth Agent to research and qualify publishers in your niche
+                    (Hunter verification required) to start building the outreach list.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              data.publishers.map((p) => (
               <Card key={p.id} className="border-border/70">
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-2">
@@ -142,7 +155,8 @@ export function OutreachView({ brandSlug }: { brandSlug: string }) {
                   </div>
                 </CardContent>
               </Card>
-            ))}
+              ))
+            )}
           </div>
         </TabsContent>
 
@@ -154,7 +168,17 @@ export function OutreachView({ brandSlug }: { brandSlug: string }) {
             <CardContent className="p-0">
               <ScrollArea className="max-h-[520px] px-4 pb-4">
                 <div className="space-y-2">
-                  {data.campaigns.map((c) => (
+                  {data.campaigns.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
+                      <Mail className="h-8 w-8 text-muted-foreground/40" />
+                      <p className="text-sm font-semibold">No outreach sequences yet</p>
+                      <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
+                        Outreach campaigns appear here once publishers are qualified and the first
+                        sequence is actually sent. Nothing is simulated.
+                      </p>
+                    </div>
+                  ) : (
+                    data.campaigns.map((c) => (
                     <div key={c.id} className="rounded-lg border border-border/70 bg-muted/20 p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm font-medium">{c.publisher.name}</p>
@@ -185,7 +209,8 @@ export function OutreachView({ brandSlug }: { brandSlug: string }) {
                         </>
                       ) : null}
                     </div>
-                  ))}
+                  ))
+                  )}
                 </div>
               </ScrollArea>
             </CardContent>
@@ -200,7 +225,18 @@ export function OutreachView({ brandSlug }: { brandSlug: string }) {
             <CardContent className="p-0">
               <ScrollArea className="max-h-[520px] px-4 pb-4">
                 <div className="space-y-2">
-                  {data.backlinks.map((b) => (
+                  {data.backlinks.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
+                      <Link2 className="h-8 w-8 text-muted-foreground/40" />
+                      <p className="text-sm font-semibold">No backlinks recorded yet</p>
+                      <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
+                        This ledger lists only links that actually point to your site — verified, not
+                        estimated. It fills automatically once the authority engine starts tracking
+                        your real referring domains.
+                      </p>
+                    </div>
+                  ) : (
+                    data.backlinks.map((b) => (
                     <div key={b.id} className="flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -228,7 +264,8 @@ export function OutreachView({ brandSlug }: { brandSlug: string }) {
                         </div>
                       </div>
                     </div>
-                  ))}
+                  ))
+                  )}
                 </div>
               </ScrollArea>
             </CardContent>

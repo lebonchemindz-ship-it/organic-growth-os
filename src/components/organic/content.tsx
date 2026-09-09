@@ -60,6 +60,7 @@ export function ContentView({ brandSlug }: { brandSlug: string }) {
   if (loading || !data) return <LoadingGrid rows={6} />
 
   const s = data.summary
+  const isEmpty = data.items.length === 0
 
   return (
     <div className="space-y-5">
@@ -68,17 +69,35 @@ export function ContentView({ brandSlug }: { brandSlug: string }) {
         description="No arbitrary publishing quotas. Every piece exists because the data said so — drafted, fact-checked, illustrated via Recraft, internally linked, scheduled and published without owner approval when it qualifies as routine GREEN content."
       />
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <KpiCard label="Total assets" value={s.total} />
-        <KpiCard label="Published" value={s.published} accent="positive" />
-        <KpiCard label="In production" value={s.inProduction} />
-        <KpiCard label="Scheduled" value={s.scheduled} sub="queued for publish" />
-        <KpiCard label="Words produced" value={fmtNum(s.totalWords)} />
-        <KpiCard label="Organic clicks" value={fmtNum(s.totalOrganicClicks)} icon={<FileText className="h-4 w-4" />} accent="positive" />
-      </div>
+      {isEmpty ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+            <FileText className="h-10 w-10 text-muted-foreground/40" />
+            <div className="max-w-md space-y-1.5">
+              <p className="text-sm font-semibold">No content assets yet — and that is the honest state</p>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                This pipeline is intentionally empty: it only lists content that was actually created and
+                published, never placeholder rows. Ask the Growth Agent to create your first content
+                brief (e.g. “create a content brief for B12 for vegetarians”) — the item will appear here
+                at the Brief stage and move through the pipeline as it is really produced. Published URLs
+                are tracked only after they actually go live on your store.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <KpiCard label="Total assets" value={s.total} />
+            <KpiCard label="Published" value={s.published} accent="positive" />
+            <KpiCard label="In production" value={s.inProduction} />
+            <KpiCard label="Scheduled" value={s.scheduled} sub="queued for publish" />
+            <KpiCard label="Words produced" value={fmtNum(s.totalWords)} />
+            <KpiCard label="Organic clicks" value={fmtNum(s.totalOrganicClicks)} icon={<FileText className="h-4 w-4" />} accent="positive" />
+          </div>
 
-      {/* Pipeline visualization */}
-      <TooltipProvider delayDuration={200}>
+          {/* Pipeline visualization */}
+          <TooltipProvider delayDuration={200}>
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Production pipeline</CardTitle>
@@ -174,7 +193,7 @@ export function ContentView({ brandSlug }: { brandSlug: string }) {
                       ) : (
                         <span>in production</span>
                       )}
-                      {item.url ? (
+                      {item.url && /^https?:\/\//.test(item.url) ? (
                         <a
                           href={item.url}
                           target="_blank"
@@ -193,6 +212,8 @@ export function ContentView({ brandSlug }: { brandSlug: string }) {
           </ScrollArea>
         </CardContent>
       </Card>
+        </>
+      )}
     </div>
   )
 }

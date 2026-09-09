@@ -327,22 +327,23 @@ export default function Home() {
                       <p className="mt-0.5 text-emerald-700/80 dark:text-emerald-300/80">
                         <b>Real right now:</b> Google Search Console + GA4 numbers on the Live Stats page, real GSC
                         keywords in the Keywords tab{dfsVerified ? ', real search volumes via DataForSEO' : ''}, and the
-                        Overview KPIs. Backlinks, AI visibility, outreach and reports stay simulated until their APIs
-                        are connected.
+                        Overview KPIs. Backlinks, AI visibility, outreach, content and reports stay empty — they
+                        fill only from real actions and connected APIs, never placeholder data.
                       </p>
                     </>
                   ) : anyReal ? (
                     <>
-                      <p className="font-semibold">Mixed data: real where connected, simulated elsewhere.</p>
+                      <p className="font-semibold">Mixed data: real where connected, empty elsewhere.</p>
                       <p className="mt-0.5 text-amber-700/80 dark:text-amber-300/80">
                         <b>Real right now:</b> {liveKeywords > 0 ? `${liveKeywords} real keywords (Search Console / DataForSEO) in the Keywords tab` : 'some real data sources'}
-                        {dfsVerified ? ' and real search volumes via DataForSEO' : ''}. <b>Still simulated:</b> traffic
-                        totals and the overview estimates until you connect Porter on the Live Stats page.
+                        {dfsVerified ? ' and real search volumes via DataForSEO' : ''}. <b>Not yet connected:</b> Google
+                        traffic totals — connect Porter on the Live Stats page. Every other section shows only real
+                        data or an honest empty state, never placeholders.
                       </p>
                     </>
                   ) : (
                     <>
-                      <p className="font-semibold">Demo data — nothing is connected yet.</p>
+                      <p className="font-semibold">No real data yet — nothing is connected.</p>
                       <p className="mt-0.5 text-amber-700/80 dark:text-amber-300/80">
                         Connect <b>Porter Metrics</b> on the Live Stats page for real Google Search Console + GA4
                         numbers, and add <b>DataForSEO API</b> credentials on the API Keys page for real search

@@ -553,41 +553,146 @@ async function decideApproval(args: Record<string, unknown>, ctx: ToolContext): 
   return { ok: true, summary: `Approval "${item.title}" → ${decision}`, data: { id: updated.id, title: updated.title, status: updated.status } }
 }
 
-// Deterministic simulated technical audit (becomes a real crawler when
-// DataForSEO / OpenSEO MCP is connected). Inspired by open-seo site-audit.
+// REAL technical audit — performs live HTTP checks against the brand
+// domain (homepage, robots.txt, sitemap.xml) and reports only what is
+// actually observed. No simulated findings: every detail string comes
+// from a real response received seconds before the answer.
+async function fetchWithTimeout(url: string, ms = 10_000) {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), ms)
+  try {
+    const started = Date.now()
+    const res = await fetch(url, {
+      redirect: 'follow',
+      signal: ctrl.signal,
+      headers: { 'user-agent': 'OrganicGrowthOS/1.8 (+live-site-audit)' },
+    })
+    const text = await res.text().catch(() => '')
+    return { status: res.status, ok: res.ok, text, ms: Date.now() - started, finalUrl: res.url }
+  } finally {
+    clearTimeout(t)
+  }
+}
+
 async function runSiteAudit(_args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
-  const published = await db.contentItem.count({ where: { brandId: ctx.brandId, stage: 'PUBLISHED' } })
-  const withImages = await db.contentItem.count({ where: { brandId: ctx.brandId, stage: 'PUBLISHED', hasImages: true } })
-  const findings = [
-    { check: 'HTTPS + canonical tags', status: 'PASS', detail: `https://${ctx.brandDomain} serves canonical on all routes` },
-    { check: 'Product structured data (schema.org)', status: 'PASS', detail: 'Supplement facts markup present on product pages' },
-    { check: 'XML sitemap + robots', status: 'PASS', detail: 'Sitemap reachable; lastmod fresh (≤7 days)' },
-    { check: 'Core Web Vitals (LCP/INP/CLS)', status: 'WARN', detail: 'LCP 2.4s on 2 collection pages — above 2.0s target' },
-    { check: 'Image coverage', status: withImages >= published * 0.7 ? 'PASS' : 'WARN', detail: `${withImages}/${published} published items carry original images` },
-    { check: 'Internal linking depth', status: 'WARN', detail: '12 articles sit at depth ≥4 from home — add hub links' },
-    { check: 'Title/meta duplication', status: 'PASS', detail: 'No duplicate titles detected in the tracked set' },
-    { check: 'IndexNow coverage', status: published > 0 ? 'PASS' : 'WARN', detail: `${published} URLs registered for instant indexing` },
-  ]
-  const pass = findings.filter(f => f.status === 'PASS').length
-  const warn = findings.length - pass
+  const origin = `https://${ctx.brandDomain}`
+  const findings: Array<{ check: string; status: string; detail: string }> = []
+
+  // ---- 1. Homepage (reachability, HTTPS, title, canonical, meta, speed) ----
+  let home: Awaited<ReturnType<typeof fetchWithTimeout>> | null = null
+  try {
+    home = await fetchWithTimeout(origin)
+  } catch {
+    findings.push({ check: 'Site reachable (HTTPS)', status: 'FAIL', detail: `https://${ctx.brandDomain} did not respond within 10s` })
+  }
+  if (home) {
+    findings.push({
+      check: 'Site reachable (HTTPS)',
+      status: home.ok ? 'PASS' : 'FAIL',
+      detail: `${home.finalUrl || origin} → HTTP ${home.status} in ${home.ms}ms`,
+    })
+    findings.push({
+      check: 'HTTPS enforced',
+      status: home.finalUrl.startsWith('https://') ? 'PASS' : 'FAIL',
+      detail: `final URL after redirects: ${home.finalUrl || origin}`,
+    })
+    const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(home.text)?.[1]?.trim() ?? ''
+    findings.push({
+      check: 'Homepage <title>',
+      status: title ? 'PASS' : 'FAIL',
+      detail: title ? `"${title.slice(0, 90)}" (${title.length} chars)` : 'no <title> tag found on the homepage',
+    })
+    const canonical = /<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)["']/i.exec(home.text)?.[1] ?? ''
+    findings.push({
+      check: 'Canonical tag on homepage',
+      status: canonical ? 'PASS' : 'WARN',
+      detail: canonical ? canonical : 'no canonical link found on the homepage',
+    })
+    const description = /<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i.exec(home.text)?.[1]?.trim() ?? ''
+    findings.push({
+      check: 'Meta description',
+      status: description ? 'PASS' : 'WARN',
+      detail: description ? `${description.slice(0, 90)}… (${description.length} chars)` : 'no meta description found on the homepage',
+    })
+    findings.push({
+      check: 'Server response time (full HTML)',
+      status: home.ms <= 800 ? 'PASS' : home.ms <= 2500 ? 'WARN' : 'FAIL',
+      detail: `${home.ms}ms — Core Web Vitals field data needs Lighthouse, but this is the real server speed right now`,
+    })
+  }
+
+  // ---- 2. robots.txt ----
+  try {
+    const rb = await fetchWithTimeout(`${origin}/robots.txt`, 8_000)
+    const body = rb.text.trim()
+    const hasSitemapLine = /sitemap\s*:/i.test(body)
+    findings.push({
+      check: 'robots.txt present',
+      status: rb.ok && body ? 'PASS' : 'WARN',
+      detail: rb.ok && body
+        ? `served, ${body.length} bytes${hasSitemapLine ? ', declares a sitemap' : ' — no "Sitemap:" line'}`
+        : `HTTP ${rb.status} — no robots.txt served`,
+    })
+  } catch {
+    findings.push({ check: 'robots.txt present', status: 'WARN', detail: 'request failed or timed out' })
+  }
+
+  // ---- 3. sitemap.xml ----
+  try {
+    const sm = await fetchWithTimeout(`${origin}/sitemap.xml`, 10_000)
+    if (sm.ok && sm.text) {
+      const urls = (sm.text.match(/<url>/gi) || []).length || (sm.text.match(/<loc>/gi) || []).length
+      findings.push({
+        check: 'XML sitemap reachable',
+        status: 'PASS',
+        detail: `${origin}/sitemap.xml — ~${urls} URL entries (sitemap index children count separately)`,
+      })
+    } else {
+      findings.push({
+        check: 'XML sitemap reachable',
+        status: 'WARN',
+        detail: `HTTP ${sm.status} at /sitemap.xml — verify the exact URL declared in robots.txt`,
+      })
+    }
+  } catch {
+    findings.push({ check: 'XML sitemap reachable', status: 'WARN', detail: 'request failed or timed out' })
+  }
+
+  // ---- 4. Shopify blog section (when the store is actually Shopify) ----
+  if (home?.text && /Shopify|cdn\.shopify/i.test(home.text)) {
+    try {
+      const bl = await fetchWithTimeout(`${origin}/blogs/news`, 8_000)
+      findings.push({
+        check: 'Shopify blog section',
+        status: bl.ok ? 'PASS' : 'WARN',
+        detail: `${origin}/blogs/news → HTTP ${bl.status}`,
+      })
+    } catch {
+      findings.push({ check: 'Shopify blog section', status: 'WARN', detail: 'request failed or timed out' })
+    }
+  }
+
+  const pass = findings.filter((f) => f.status === 'PASS').length
+  const fail = findings.filter((f) => f.status === 'FAIL').length
+  const warn = findings.length - pass - fail
   const task = await db.task.create({
     data: {
       brandId: ctx.brandId,
-      title: 'Site audit — technical SEO checks',
-      description: `Automated audit of ${ctx.brandDomain}: ${pass} pass, ${warn} warnings.`,
+      title: 'Site audit — live technical checks',
+      description: `Live audit of https://${ctx.brandDomain}: ${pass} pass, ${warn} warnings, ${fail} failures.`,
       type: 'AUDIT',
-      priority: warn > 2 ? 'HIGH' : 'MEDIUM',
+      priority: fail > 0 ? 'HIGH' : warn > 2 ? 'MEDIUM' : 'LOW',
       status: 'DONE',
       source: 'ASSISTANT',
-      result: `${pass}/${findings.length} checks passed. Priority fixes: LCP on collection pages, internal linking depth.`,
+      result: `${pass}/${findings.length} live checks passed — full findings in the chat transcript.`,
       completedAt: new Date(),
     },
   })
-  await logEvent(ctx, 'SITE_AUDIT', `Agent ran site audit on ${ctx.brandDomain}`, `${pass} pass / ${warn} warn`)
+  await logEvent(ctx, 'SITE_AUDIT', `Agent ran a LIVE site audit on ${ctx.brandDomain}`, `${pass} pass / ${warn} warn / ${fail} fail`)
   return {
     ok: true,
-    summary: `Audit done: ${pass} pass / ${warn} warnings. Task recorded.`,
-    data: { findings, taskId: task.id, simulated: true },
+    summary: `Live audit of https://${ctx.brandDomain}: ${pass} pass / ${warn} warnings / ${fail} failures. Every check ran against the real site just now.`,
+    data: { findings, taskId: task.id, live: true },
   }
 }
 
@@ -606,7 +711,7 @@ export const TOOLS: ToolDef[] = [
   { name: 'delete_task', description: 'Permanently delete a task from the board (the owner can also delete tasks in the Task Board UI).', args: '{ "id": string }', execute: deleteTask },
   { name: 'get_real_stats', description: 'REAL traffic statistics from Google Search Console + GA4 via the connected Porter Metrics account: clicks, impressions, CTR, average position, top queries, top pages, sessions and users. This is the ONLY source of real traffic numbers — use it whenever the owner asks for real stats, clicks or traffic (mark other dashboard numbers as estimates).', args: '{ "days"?: number (7-90, default 28) }', execute: getRealStats },
   { name: 'create_content_brief', description: 'Create a content item at BRIEF stage and queue the drafting task (pipeline: brief → draft → fact-check → optimize → image → link → schedule → publish).', args: '{ "title": string, "keyword"?: string, "type"?: "ARTICLE|COMPARISON|GUIDE|FAQ|PRODUCT|LANDING" }', execute: createContentBrief },
-  { name: 'run_site_audit', description: 'Run a technical SEO audit of the brand domain (HTTPS, schema, sitemap, Core Web Vitals, images, internal links, IndexNow). Records an audit task with findings.', args: '{}', execute: runSiteAudit },
+  { name: 'run_site_audit', description: 'Run a LIVE technical SEO audit of the brand domain — real HTTP requests to the homepage, robots.txt, sitemap.xml and blog section right now (status codes, redirects, title/canonical/meta presence, real response times). Records an audit task with the findings. Never simulated.', args: '{}', execute: runSiteAudit },
   { name: 'list_content', description: 'Content pipeline items with stage and performance.', args: '{}', execute: listContent },
   { name: 'outreach_status', description: 'Outreach campaigns, qualified publishers and top backlinks.', args: '{}', execute: outreachStatus },
   { name: 'ai_visibility', description: 'GEO engine: brand mention tracking across ChatGPT, Gemini, Perplexity, Claude, Copilot prompts.', args: '{}', execute: aiVisibility },

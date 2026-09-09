@@ -169,7 +169,22 @@ export function ReportsView({ brandSlug }: { brandSlug: string }) {
             </CardContent>
           </Card>
         </>
-      ) : null}
+      ) : (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+            <FileBarChart className="h-10 w-10 text-muted-foreground/40" />
+            <div className="max-w-md space-y-1.5">
+              <p className="text-sm font-semibold">No weekly reports yet — nothing to hide behind</p>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Reports are generated from real performance history: Search Console clicks, keyword
+                movement and outcomes of executed actions. The first meaningful report can be produced
+                once a few weeks of real data accumulate after your sources are connected. Live
+                numbers are always visible in the meantime on the Overview and Live Stats pages.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Archive */}
       <Card>
@@ -179,7 +194,12 @@ export function ReportsView({ brandSlug }: { brandSlug: string }) {
         <CardContent className="p-0">
           <ScrollArea className="max-h-[400px] px-4 pb-4">
             <div className="space-y-1">
-              {data.reports.map((r, i) => (
+              {data.reports.length === 0 ? (
+                <p className="py-8 text-center text-xs text-muted-foreground">
+                  No archived reports yet — history starts accumulating from real data.
+                </p>
+              ) : (
+                data.reports.map((r, i) => (
                 <div key={r.id}>
                   <div className="flex flex-wrap items-center justify-between gap-2 py-3">
                     <div className="flex items-center gap-3">
@@ -200,7 +220,8 @@ export function ReportsView({ brandSlug }: { brandSlug: string }) {
                   </div>
                   {i < data.reports.length - 1 ? <Separator className="opacity-50" /> : null}
                 </div>
-              ))}
+              ))
+              )}
             </div>
           </ScrollArea>
         </CardContent>

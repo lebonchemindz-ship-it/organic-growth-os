@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { seedDatabase } from '@/lib/seed-app'
+import { seedDatabase, seedIntegrations } from '@/lib/seed-app'
 import { SCHEMA_DDL } from '@/lib/schema-ddl'
 import { importEnvCredentials } from '@/lib/credentials'
 
@@ -36,11 +36,75 @@ export async function ensureSeeded(): Promise<void> {
       // column already exists — expected on fresh databases
     }
 
-    // 3. Seed demo data if empty
+    // 3. v1.8 — ONE-TIME PURGE of legacy demo data.
+    //    Databases created before v1.8 were seeded with a synthetic demo
+    //    dataset: content items with fake URLs that 404'd on the real
+    //    store, random fake clicks/positions, fake publishers, fake
+    //    weekly reports, fake integration statuses. The owner's rule:
+    //    never show demo numbers as real. This migration deletes every
+    //    demo row while PRESERVING all real data (GSC/DataForSEO/agent
+    //    keywords, chat history, agent-created tasks and events), then
+    //    rebuilds the integration catalog honestly. Idempotent — guarded
+    //    by a marker row in the "_Meta" table so it runs exactly once
+    //    per database.
+    try {
+      await db.$executeRawUnsafe('CREATE TABLE IF NOT EXISTS "_Meta" ("key" TEXT NOT NULL PRIMARY KEY, "value" TEXT NOT NULL DEFAULT \'\')')
+      const marker = await db.$queryRawUnsafe<Array<{ key: string }>>(
+        'SELECT "key" FROM "_Meta" WHERE "key" = \'demo_purge_v1\'',
+      )
+      if (marker.length === 0) {
+        console.log('[ensure-seed] v1.8: purging legacy demo data (one-time migration)')
+        // content pipeline — all legacy rows were seeded (fake URLs,
+        // fake clicks, fake positions)
+        await db.contentItem.deleteMany({})
+        // keywords — drop only DEMO rows, keep GSC / DATAFORSEO / AGENT
+        await db.keyword.deleteMany({ where: { source: 'DEMO' } })
+        // fully synthetic tables
+        await db.opportunity.deleteMany({})
+        await db.publisher.deleteMany({})
+        await db.outreachCampaign.deleteMany({})
+        await db.aiPrompt.deleteMany({})
+        await db.approvalItem.deleteMany({})
+        await db.weeklyReport.deleteMany({})
+        await db.backlinkRecord.deleteMany({})
+        // demo log events (real event types are kept: CREDENTIAL, TASK,
+        // BRIEF_CREATED, SITE_AUDIT, APPROVAL_*, SYSTEM, …)
+        await db.systemEvent.deleteMany({
+          where: { type: { in: ['DAILY_LOOP', 'CONTENT', 'OUTREACH', 'GEO', 'TECHNICAL_SEO', 'ALERT', 'LEARNING'] } },
+        })
+        // the 6 seeded demo tasks — agent/owner-created tasks are kept
+        await db.task.deleteMany({
+          where: {
+            title: {
+              in: [
+                'Audit product page Core Web Vitals',
+                'Refresh "B12 for Vegetarians" article',
+                'Find 10 unlinked brand mentions',
+                'Track 5 new GEO prompts',
+                'Research keyword gap vs top competitor',
+                'Draft outreach for supplementreviewer.io',
+              ],
+            },
+          },
+        })
+        // rebuild the integration catalog with honest statuses (also
+        // replaces the legacy fake "Supabase (Postgres)" row)
+        await seedIntegrations()
+        await db.$executeRawUnsafe(
+          'INSERT OR REPLACE INTO "_Meta" ("key", "value") VALUES (\'demo_purge_v1\', \'1\')',
+        )
+        console.log('[ensure-seed] v1.8 purge complete — only real data remains')
+      }
+    } catch (purgeErr) {
+      console.error('[ensure-seed] v1.8 purge failed:', purgeErr)
+    }
+
+    // 4. Seed baseline configuration if empty (v1.8: brands + the
+    //    integration catalog ONLY — no demo metrics are ever seeded)
     try {
       const count = await db.brand.count()
       if (count === 0) {
-        console.log('[ensure-seed] database empty — seeding demo data')
+        console.log('[ensure-seed] database empty — seeding baseline configuration')
         await seedDatabase()
       }
     } catch (seedCheckErr) {

@@ -318,7 +318,23 @@ export function KeywordsView({ brandSlug }: { brandSlug: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((k) => (
+              {filtered.length === 0 ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="py-12">
+                    <div className="flex flex-col items-center justify-center gap-2 text-center">
+                      <Search className="h-8 w-8 text-muted-foreground/40" />
+                      <p className="text-sm font-semibold">No keywords tracked yet</p>
+                      <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
+                        Press “Sync from Search Console” above to import the real queries your visitors
+                        search — actual positions, impressions and clicks straight from Google. Keyword
+                        research with real search volumes unlocks once DataForSEO API keys are saved on the
+                        API Keys page.
+                      </p>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filtered.map((k) => (
                 <TableRow key={k.id}>
                   <TableCell>
                     <div className="flex flex-col gap-1">
@@ -351,7 +367,8 @@ export function KeywordsView({ brandSlug }: { brandSlug: string }) {
                   <TableCell className="hidden lg:table-cell text-sm tabular-nums text-muted-foreground">{k.aeoValue}</TableCell>
                   <TableCell className="hidden lg:table-cell text-sm tabular-nums text-muted-foreground">{k.geoValue}</TableCell>
                 </TableRow>
-              ))}
+              ))
+              )}
             </TableBody>
           </Table>
         </ScrollArea>
