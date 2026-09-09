@@ -76,6 +76,8 @@ db/*.db-journal
 
 # sandbox infra (not part of the app)
 /.zscripts/
+/tool-results/
+.railway/
 /Caddyfile
 /download/
 /examples/
