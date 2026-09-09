@@ -85,6 +85,34 @@ export async function ensureSeeded(): Promise<void> {
       console.error('[ensure-seed] v1.9 honest-numbers migration failed:', v19Err)
     }
 
+    // 2d. v1.9b — demo-residue wipe. One legacy demo keyword whose term also
+    //     exists as a REAL GSC query was "adopted" by the sync (source flipped
+    //     to GSC) before the v1.8 purge ran, so its fake difficulty (31) and
+    //     fake slugified targetUrl survived. GSC provides neither difficulty
+    //     nor landing-page URLs — any such value on a GSC row is residue.
+    //     Wiped once, guarded by marker. (A DATAFORSEO row's difficulty is
+    //     a real API measurement and is kept.)
+    try {
+      const markerV19b = await db.$queryRawUnsafe<Array<{ key: string }>>(
+        'SELECT "key" FROM "_Meta" WHERE "key" = \'gsc_demo_residue_v1\'',
+      )
+      if (markerV19b.length === 0) {
+        console.log('[ensure-seed] v1.9b: wiping demo residue from adopted GSC rows (one-time)')
+        await db.$executeRawUnsafe(
+          `UPDATE "Keyword" SET "difficulty" = 0 WHERE "source" != 'DATAFORSEO'`,
+        )
+        await db.$executeRawUnsafe(
+          `UPDATE "Keyword" SET "targetUrl" = '' WHERE "source" = 'GSC'`,
+        )
+        await db.$executeRawUnsafe(
+          'INSERT OR REPLACE INTO "_Meta" ("key", "value") VALUES (\'gsc_demo_residue_v1\', \'1\')',
+        )
+        console.log('[ensure-seed] v1.9b residue wipe complete')
+      }
+    } catch (v19bErr) {
+      console.error('[ensure-seed] v1.9b residue wipe failed:', v19bErr)
+    }
+
     // 3. v1.8 — ONE-TIME PURGE of legacy demo data.
     //    Databases created before v1.8 were seeded with a synthetic demo
     //    dataset: content items with fake URLs that 404'd on the real

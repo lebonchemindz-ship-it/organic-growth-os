@@ -192,11 +192,15 @@ export async function syncGscKeywords(brandId: string, brandDomain: string, days
       const delta = existing.currentPosition > 0 && pos > 0 ? existing.currentPosition - pos : 0
       // monthlyVolume is never touched here — it only ever holds REAL
       // search volume from DataForSEO enrichment, not GSC impressions
+      // when the sync adopts a foreign row (e.g. a legacy demo/agent row
+      // with the same term), reset metrics GSC does not own so no
+      // fake numbers ride along
+      const adopting = existing.source !== 'GSC' && existing.source !== 'DATAFORSEO'
       const needsUpdate =
         existing.currentPosition !== pos ||
         existing.impressions !== q.impressions ||
         existing.clicks !== q.clicks ||
-        (existing.source !== 'DATAFORSEO' && existing.source !== 'GSC')
+        adopting
       if (needsUpdate) {
         await db.keyword.update({
           where: { id: existing.id },
@@ -205,6 +209,7 @@ export async function syncGscKeywords(brandId: string, brandDomain: string, days
             previousPosition: existing.currentPosition || 0,
             impressions: q.impressions,
             clicks: q.clicks,
+            ...(adopting ? { difficulty: 0, targetUrl: '' } : {}),
             source: existing.source === 'DATAFORSEO' ? existing.source : 'GSC',
             status: 'TRACKING',
           },
