@@ -36,9 +36,9 @@ const NAV: Array<{ group: string; items: Array<{ id: SectionId; label: string; i
   {
     group: 'Operate',
     items: [
+      { id: 'agent', label: 'Growth Agent', icon: <Bot className="h-4 w-4" /> },
       { id: 'dashboard', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
       { id: 'live-stats', label: 'Live Stats', icon: <BarChart3 className="h-4 w-4" /> },
-      { id: 'agent', label: 'Growth Agent', icon: <Bot className="h-4 w-4" /> },
       { id: 'opportunities', label: 'Opportunities', icon: <Sparkles className="h-4 w-4" /> },
       { id: 'keywords', label: 'Keywords', icon: <Search className="h-4 w-4" /> },
       { id: 'content', label: 'Content Engine', icon: <FileText className="h-4 w-4" /> },
