@@ -1,7 +1,9 @@
 'use client'
 
+import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -11,7 +13,7 @@ import {
 } from 'recharts'
 import {
   TrendingUp, Search, Link2, Bot, FileText, Users, AlertTriangle,
-  CheckCircle2, Activity, Sparkles, Zap, MousePointerClick, Eye, Gauge,
+  CheckCircle2, Activity, Sparkles, Zap, MousePointerClick, Eye, Gauge, RefreshCw,
 } from 'lucide-react'
 import {
   useApiData, KpiCard, SectionHeader, LoadingGrid, ErrorBox, RealnessChip,
@@ -109,7 +111,20 @@ const VERDICT_LABELS: Record<string, string> = {
 }
 
 export function DashboardView({ brandSlug }: { brandSlug: string }) {
-  const { data, loading, error } = useApiData<OverviewData>(`/api/overview?brand=${brandSlug}`)
+  const { data, loading, error, refetch } = useApiData<OverviewData>(`/api/overview?brand=${brandSlug}`)
+  const [forceRefreshing, setForceRefreshing] = useState(false)
+
+  // Force-live pull: ?refresh=1 bypasses every server-side cache for
+  // the KPI sources (Google via Porter, DataForSEO backlinks) so the
+  // owner always sees numbers straight from the source.
+  const doForceRefresh = async () => {
+    setForceRefreshing(true)
+    try {
+      await refetch(`/api/overview?brand=${brandSlug}&refresh=1`)
+    } finally {
+      setForceRefreshing(false)
+    }
+  }
 
   if (error) return <ErrorBox message={error} />
   if (loading || !data) {
@@ -212,6 +227,17 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
           </CardContent>
         </Card>
       ) : null}
+
+      {/* force-live refresh bar — always give the owner a working button */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          KPIs refresh automatically every 60 seconds — a manual refresh forces a live pull from Google & DataForSEO.
+        </p>
+        <Button onClick={doForceRefresh} disabled={forceRefreshing} size="sm" variant="outline" className="h-8 shrink-0">
+          <RefreshCw className={`mr-2 h-3.5 w-3.5 ${forceRefreshing ? 'animate-spin' : ''}`} />
+          {forceRefreshing ? 'Pulling live data…' : 'Refresh live KPIs'}
+        </Button>
+      </div>
 
       {/* KPI grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

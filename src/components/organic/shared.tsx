@@ -15,10 +15,12 @@ export function useApiData<T>(url: string) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const refetch = useCallback(async () => {
+  // urlOverride lets a view force a LIVE pull (e.g. ?refresh=1 to
+  // bypass server-side caches) without changing its regular url.
+  const refetch = useCallback(async (urlOverride?: string) => {
     try {
       setError(null)
-      const res = await fetch(url, { cache: 'no-store' })
+      const res = await fetch(urlOverride ?? url, { cache: 'no-store' })
       if (!res.ok) throw new Error(`Request failed: ${res.status}`)
       const json = await res.json()
       setData(json)

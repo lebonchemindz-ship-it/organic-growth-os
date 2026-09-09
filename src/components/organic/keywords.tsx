@@ -8,7 +8,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
 import { Input } from '@/components/ui/input'
-import { Search, ArrowUp, ArrowDown, Minus, RefreshCw, Sparkles, Database, AlertTriangle, CheckCircle2, KeyRound } from 'lucide-react'
+import { Search, ArrowUp, ArrowDown, Minus, RefreshCw, Sparkles, Database, AlertTriangle, CheckCircle2, KeyRound, Gauge } from 'lucide-react'
 import {
   useApiData, LoadingGrid, ErrorBox, SectionHeader, KpiCard, fmtNum,
 } from './shared'
@@ -101,6 +101,17 @@ interface SyncResponse {
   topMovers?: Array<{ term: string; position: number; clicks: number; delta: number }>
 }
 
+interface EnrichResponse {
+  ok?: boolean
+  error?: string
+  message?: string
+  requested?: number
+  withVolume?: number
+  withDifficulty?: number
+  cost?: number
+  remaining?: number
+}
+
 function PositionCell({ row }: { row: KeywordRow }) {
   if (row.currentPosition === 0) {
     return <span className="text-sm text-muted-foreground">not ranking</span>
@@ -128,7 +139,34 @@ function RealDataPanel({ brandSlug, onDone }: { brandSlug: string; onDone: () =>
   const [seed, setSeed] = useState('')
   const [syncing, setSyncing] = useState(false)
   const [researching, setResearching] = useState(false)
-  const [result, setResult] = useState<{ kind: 'sync' | 'research'; ok: boolean; text: string } | null>(null)
+  const [enriching, setEnriching] = useState(false)
+  const [result, setResult] = useState<{ kind: 'sync' | 'research' | 'enrich'; ok: boolean; text: string } | null>(null)
+
+  const doEnrich = async () => {
+    setEnriching(true)
+    setResult(null)
+    try {
+      const res = await fetch('/api/keywords', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'enrich', brandSlug, limit: 300 }),
+      })
+      const json = (await res.json()) as EnrichResponse
+      if (json.ok) {
+        setResult({
+          kind: 'enrich', ok: true,
+          text: `Real metrics landed: ${json.withVolume ?? 0} keyword(s) with real search volume, ${json.withDifficulty ?? 0} with real difficulty${typeof json.cost === 'number' ? ` (DataForSEO cost $${json.cost.toFixed(4)})` : ''}${json.remaining ? ` — ${json.remaining} more available.` : ''}.`,
+        })
+        onDone()
+      } else {
+        setResult({ kind: 'enrich', ok: false, text: json.message || 'Volume/difficulty enrichment failed.' })
+      }
+    } catch {
+      setResult({ kind: 'enrich', ok: false, text: 'Network error — could not reach the enrichment endpoint.' })
+    } finally {
+      setEnriching(false)
+    }
+  }
 
   const doSync = async () => {
     setSyncing(true)
@@ -203,9 +241,14 @@ function RealDataPanel({ brandSlug, onDone }: { brandSlug: string; onDone: () =>
       </p>
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-        <Button onClick={doSync} disabled={syncing || researching} size="sm" className="h-9">
+        <Button onClick={doSync} disabled={syncing || researching || enriching} size="sm" className="h-9">
           <RefreshCw className={`mr-2 h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
           {syncing ? 'Syncing from Search Console…' : 'Sync from Search Console'}
+        </Button>
+
+        <Button onClick={doEnrich} disabled={enriching || syncing || researching} size="sm" variant="outline" className="h-9">
+          <Gauge className={`mr-2 h-3.5 w-3.5 ${enriching ? 'animate-pulse' : ''}`} />
+          {enriching ? 'Fetching real volume & difficulty…' : 'Enrich volume & difficulty (DataForSEO)'}
         </Button>
 
         <div className="flex flex-1 items-center gap-2">
@@ -220,7 +263,7 @@ function RealDataPanel({ brandSlug, onDone }: { brandSlug: string; onDone: () =>
               disabled={researching || syncing}
             />
           </div>
-          <Button onClick={doResearch} disabled={researching || syncing || !seed.trim()} size="sm" variant="outline" className="h-9 shrink-0">
+          <Button onClick={doResearch} disabled={researching || syncing || enriching || !seed.trim()} size="sm" variant="outline" className="h-9 shrink-0">
             {researching ? 'Researching…' : 'Research'}
           </Button>
         </div>

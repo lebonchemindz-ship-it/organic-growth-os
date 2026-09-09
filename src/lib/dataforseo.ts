@@ -143,12 +143,25 @@ export interface BacklinksSummary {
 
 let backlinksCache = new Map<string, { summary: BacklinksSummary; ts: number }>()
 const BACKLINKS_TTL_MS = 6 * 60 * 60_000
+// failures (bad key, empty wallet) must NOT stick for 6 hours —
+// the moment the owner fixes the key the next read retries live
+const BACKLINKS_FAILURE_TTL_MS = 60_000
+
+/**
+ * Drop all in-memory DataForSEO caches. Called when the owner
+ * saves or removes DataForSEO credentials so a NEW key takes
+ * effect immediately (never re-shows a stale 40100 rejection).
+ */
+export function resetDataForSeoCaches(): void {
+  authCache = null
+  backlinksCache.clear()
+}
 
 export async function fetchBacklinksSummary(domain: string, force = false): Promise<BacklinksSummary> {
   const key = domain.toLowerCase()
   if (!force) {
     const hit = backlinksCache.get(key)
-    if (hit && Date.now() - hit.ts < BACKLINKS_TTL_MS) return hit.summary
+    if (hit && Date.now() - hit.ts < (hit.summary.ok ? BACKLINKS_TTL_MS : BACKLINKS_FAILURE_TTL_MS)) return hit.summary
   }
 
   // fail fast on bad/missing credentials so we never charge a doomed call
@@ -216,6 +229,165 @@ export async function fetchBacklinksSummary(domain: string, force = false): Prom
     const summary: BacklinksSummary = { ok: false, referringDomains: null, backlinks: null, message: `DataForSEO responded with HTTP ${res.status} — not confirmed.` }
     backlinksCache.set(key, { summary, ts: Date.now() })
     return summary
+  }
+}
+
+// ------------------------------------------------------------
+// BULK KEYWORD METRICS — Labs "Bulk Keyword Search Volume" +
+// "Bulk Keyword Difficulty" endpoints. Fills the REAL Volume &
+// Difficulty columns for tracked GSC keywords in two cheap
+// batched calls (up to 1000 keywords per request each).
+// ------------------------------------------------------------
+
+export interface BulkKeywordMetric {
+  volume: number
+  difficulty: number
+}
+
+export interface BulkMetricsOutcome {
+  ok: boolean
+  /** lowercase term → real metrics (only terms DataForSEO knows) */
+  metrics: Map<string, BulkKeywordMetric>
+  volumeCount: number
+  difficultyCount: number
+  /** exact USD DataForSEO charged for these calls */
+  cost: number
+  messages: string[]
+}
+
+/** minimum balance guard so enrichment can never drain the wallet */
+export const MIN_ENRICH_BALANCE = 0.25
+
+interface LabsTask {
+  status_code?: number
+  status_message?: string
+  cost?: number
+  result?: Array<Record<string, unknown>>
+}
+
+function labItems(task: LabsTask | undefined): Record<string, unknown>[] {
+  const result = task?.result
+  if (!Array.isArray(result) || result.length === 0) return []
+  // standard shape: result[0].items — but accept a bare item list too
+  const first = result[0]
+  const items = (first as { items?: unknown })?.items
+  if (Array.isArray(items)) return items as Record<string, unknown>[]
+  return result as Record<string, unknown>[]
+}
+
+function num(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
+/** search volume from an item: `search_volume` or the newest `monthly_searches` entry */
+function volumeOf(item: Record<string, unknown>): number {
+  const direct = num(item.search_volume)
+  if (direct !== null) return Math.max(0, Math.round(direct))
+  const history = item.monthly_searches
+  if (Array.isArray(history)) {
+    const dated = history
+      .map((m) => m as { year?: unknown; month?: unknown; search_volume?: unknown })
+      .filter((m) => num(m.search_volume) !== null)
+      .sort((a, b) => (num(a.year) ?? 0) - (num(b.year) ?? 0) || (num(a.month) ?? 0) - (num(b.month) ?? 0))
+    if (dated.length > 0) return Math.max(0, Math.round(num(dated[dated.length - 1].search_volume) ?? 0))
+  }
+  return 0
+}
+
+async function bulkCall(
+  path: string,
+  cfg: DataForSeoConfig,
+  terms: string[],
+  locationName: string,
+  languageName: string,
+): Promise<{ items: Record<string, unknown>[]; cost: number; statusCode: number | null; message: string | null }> {
+  const res = await fetchWithTimeout(`${API}${path}`, {
+    method: 'POST',
+    headers: { authorization: authHeader(cfg), 'content-type': 'application/json' },
+    body: JSON.stringify([{ location_name: locationName, language_name: languageName, keywords: terms }]),
+  }, 60_000)
+  if (!res) return { items: [], cost: 0, statusCode: null, message: `Could not reach ${path} (network/timeout).` }
+  try {
+    const data = await res.json() as { status_code?: number; status_message?: string; cost?: number; tasks?: LabsTask[] }
+    const task = data.tasks?.[0]
+    const code = data.status_code ?? task?.status_code ?? null
+    const cost = num(data.cost) ?? 0
+    if (code === 40100) {
+      return { items: [], cost, statusCode: 40100, message: 'Rejected (40100) — the DataForSEO API login/password is incorrect. Generate real API credentials at app.dataforseo.com → API Access.' }
+    }
+    if (code === 40202) {
+      return { items: [], cost, statusCode: 40202, message: 'Your DataForSEO account ran out of funds — top up at app.dataforseo.com.' }
+    }
+    if (code !== 20000) {
+      return { items: [], cost, statusCode: code, message: `DataForSEO ${path} failed (status ${code ?? res.status}: ${data.status_message || task?.status_message || 'unknown'}).` }
+    }
+    return { items: labItems(task), cost, statusCode: code, message: null }
+  } catch {
+    return { items: [], cost: 0, statusCode: null, message: `DataForSEO ${path} responded with HTTP ${res.status} — not confirmed.` }
+  }
+}
+
+/**
+ * Real volume + difficulty for up to 1000 exact keywords via two
+ * Labs bulk endpoints. Failures of one endpoint never block the
+ * other; every outcome carries the exact cost so the caller can
+ * stay honest about what was spent.
+ */
+export async function fetchBulkKeywordMetrics(
+  terms: string[],
+  opts: { locationName?: string; languageName?: string } = {},
+): Promise<BulkMetricsOutcome> {
+  const metrics = new Map<string, BulkKeywordMetric>()
+  const messages: string[] = []
+  let cost = 0
+
+  const auth = await checkDataForSeoAuth()
+  if (!auth.ok) {
+    return { ok: false, metrics, volumeCount: 0, difficultyCount: 0, cost: 0, messages: [auth.message] }
+  }
+  if (auth.balance !== null && auth.balance < MIN_ENRICH_BALANCE) {
+    return {
+      ok: false, metrics, volumeCount: 0, difficultyCount: 0, cost: 0,
+      messages: [`DataForSEO balance is too low ($${auth.balance.toFixed(2)}) — top up at app.dataforseo.com to enrich more keywords.`],
+    }
+  }
+  const cfg = await getDataForSeoConfig()
+  if (!cfg || terms.length === 0) {
+    return { ok: false, metrics, volumeCount: 0, difficultyCount: 0, cost: 0, messages: [cfg ? 'No keywords to enrich.' : 'No DataForSEO credentials saved.'] }
+  }
+
+  const locationName = (opts.locationName || 'United States').trim()
+  const languageName = (opts.languageName || 'English').trim()
+
+  const volume = await bulkCall('/v3/dataforseo_labs/google/bulk_keyword_search_volume/live', cfg, terms, locationName, languageName)
+  cost += volume.cost
+  if (volume.message) messages.push(volume.message)
+  for (const item of volume.items) {
+    const kw = typeof item.keyword === 'string' ? item.keyword.toLowerCase() : ''
+    if (!kw) continue
+    const entry = metrics.get(kw) ?? { volume: 0, difficulty: 0 }
+    entry.volume = volumeOf(item)
+    metrics.set(kw, entry)
+  }
+
+  const difficulty = await bulkCall('/v3/dataforseo_labs/google/bulk_keyword_difficulty/live', cfg, terms, locationName, languageName)
+  cost += difficulty.cost
+  if (difficulty.message) messages.push(difficulty.message)
+  for (const item of difficulty.items) {
+    const kw = typeof item.keyword === 'string' ? item.keyword.toLowerCase() : ''
+    if (!kw) continue
+    const kd = num(item.keyword_difficulty)
+    if (kd === null) continue
+    const entry = metrics.get(kw) ?? { volume: 0, difficulty: 0 }
+    entry.difficulty = Math.max(0, Math.min(100, Math.round(kd)))
+    metrics.set(kw, entry)
+  }
+
+  const volumeCount = [...metrics.values()].filter((m) => m.volume > 0).length
+  const difficultyCount = [...metrics.values()].filter((m) => m.difficulty > 0).length
+  return {
+    ok: volumeCount > 0 || difficultyCount > 0,
+    metrics, volumeCount, difficultyCount, cost, messages,
   }
 }
 

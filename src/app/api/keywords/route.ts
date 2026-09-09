@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { ensureSeeded } from '@/lib/ensure-seed'
 import { ensureGscMaterialized, syncGscKeywords } from '@/lib/gsc-keywords'
-import { researchKeywords } from '@/lib/dataforseo'
+import { fetchBulkKeywordMetrics, researchKeywords } from '@/lib/dataforseo'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -167,7 +167,93 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    return NextResponse.json({ error: 'unknown_action', message: 'Use action: "sync-gsc" or "research".' }, { status: 400 })
+    // ---- action: enrich — REAL volume + difficulty for tracked keywords ----
+    // Sends up to `limit` not-yet-enriched keywords (highest GSC
+    // impressions first) to DataForSEO's bulk endpoints and stores
+    // the real numbers. Keywords already carrying a number are never
+    // re-charged. Returns the exact cost so spending stays visible.
+    if (action === 'enrich') {
+      const limit = Math.min(Math.max(Number(body.limit) || 300, 10), 1000)
+      const locationName = String(body.locationName || 'United States').trim().slice(0, 60)
+
+      const targets = await db.keyword.findMany({
+        where: {
+          brandId: brand.id,
+          monthlyVolume: 0,
+          difficulty: 0,
+          source: { in: ['GSC', 'DATAFORSEO'] },
+        },
+        orderBy: [{ impressions: 'desc' }, { clicks: 'desc' }],
+        take: limit,
+        select: { id: true, term: true },
+      })
+      if (targets.length === 0) {
+        return NextResponse.json({
+          ok: true, enriched: 0, withVolume: 0, withDifficulty: 0, cost: 0,
+          remaining: 0,
+          message: 'Every tracked keyword already carries real DataForSEO volume & difficulty.',
+        })
+      }
+
+      const outcome = await fetchBulkKeywordMetrics(targets.map((t) => t.term), { locationName })
+      if (!outcome.ok && outcome.metrics.size === 0) {
+        const status = outcome.messages[0]?.includes('40100') ? 401 : 502
+        return NextResponse.json({
+          error: 'enrich_failed',
+          message: outcome.messages[0] || 'DataForSEO bulk keyword lookup failed.',
+          requested: targets.length,
+        }, { status })
+      }
+
+      let withVolume = 0
+      let withDifficulty = 0
+      for (const t of targets) {
+        const m = outcome.metrics.get(t.term.toLowerCase())
+        if (!m) continue
+        if (m.volume <= 0 && m.difficulty <= 0) continue
+        if (m.volume > 0) withVolume += 1
+        if (m.difficulty > 0) withDifficulty += 1
+        await db.keyword.update({
+          where: { id: t.id },
+          data: {
+            monthlyVolume: m.volume,
+            difficulty: m.difficulty,
+          },
+        })
+      }
+
+      const remaining = await db.keyword.count({
+        where: { brandId: brand.id, monthlyVolume: 0, difficulty: 0, source: { in: ['GSC', 'DATAFORSEO'] } },
+      })
+
+      try {
+        await db.systemEvent.create({
+          data: {
+            brandId: brand.id,
+            type: 'CREDENTIAL',
+            level: 'INFO',
+            message: `[KEYWORD_ENRICH] Real volume/difficulty for ${withVolume + withDifficulty > 0 ? withVolume + ' keywords' : '0 keywords'} via DataForSEO (cost $${outcome.cost.toFixed(4)})`,
+            meta: `requested=${targets.length} withVolume=${withVolume} withDifficulty=${withDifficulty} remaining=${remaining}`,
+          },
+        })
+      } catch {
+        // logging is best-effort
+      }
+
+      return NextResponse.json({
+        ok: true,
+        requested: targets.length,
+        enriched: withVolume + withDifficulty,
+        withVolume,
+        withDifficulty,
+        cost: outcome.cost,
+        remaining,
+        messages: outcome.messages.length > 0 ? outcome.messages : undefined,
+        message: `${withVolume} keyword(s) now carry real search volume and ${withDifficulty} carry real difficulty (cost $${outcome.cost.toFixed(4)}). ${remaining} keyword(s) left to enrich.`,
+      })
+    }
+
+    return NextResponse.json({ error: 'unknown_action', message: 'Use action: "sync-gsc", "research" or "enrich".' }, { status: 400 })
   } catch (e) {
     console.error('[keywords] POST failed:', e)
     return NextResponse.json({ error: 'keyword_action_failed', message: 'The keyword action failed with an internal error.' }, { status: 500 })

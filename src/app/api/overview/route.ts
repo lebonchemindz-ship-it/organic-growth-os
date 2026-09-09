@@ -76,7 +76,10 @@ export async function GET(req: NextRequest) {
     // ---------- REAL referring domains (DataForSEO Backlinks API) ----------
     // Falls back to the local outreach-acquired backlink count (0) when
     // DataForSEO keys are missing/invalid — and says so honestly.
-    const backlinksLive = await fetchBacklinksSummary(brand.domain).catch(() => null)
+    // ?refresh=1 (the dashboard Refresh button) forces a live re-pull,
+    // bypassing the 6h cache — errors were never cached longer than 60s.
+    const force = req.nextUrl.searchParams.get('refresh') === '1'
+    const backlinksLive = await fetchBacklinksSummary(brand.domain, force).catch(() => null)
     const realReferringDomains = backlinksLive?.ok && backlinksLive.referringDomains !== null
     const lastMentionCheck = llmPrompts.length > 0
       ? llmPrompts.reduce((max, p) => (p.lastCheckedAt > max ? p.lastCheckedAt : max), llmPrompts[0].lastCheckedAt)
