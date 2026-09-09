@@ -1,0 +1,28 @@
+{
+  "projectId": "5e1577a1-ab90-436e-8153-a6a7ada3bed0",
+  "environmentId": "ba3684b0-8c14-493e-bdeb-2ed78803353c",
+  "serviceId": "69b78146-0111-47d2-874f-ee183c6d1235",
+  "volumeId": "0a9d2312-4226-48b1-8445-f1027f30c868",
+  "deployRef": "69b78146-0111-47d2-874f-ee183c6d1235",
+  "publicUrl": "https://organic-growth-os-production-c185.up.railway.app",
+  "deploymentId": "079aeba8-31aa-45fb-9cfc-b0af5be4ee43",
+  "health": {
+    "status": 502,
+    "json": {
+      "status": "error",
+      "code": 502,
+      "message": "Application failed to respond",
+      "request_id": "LotApPe0TZa27ct5O8poTA"
+    }
+  },
+  "dataStatus": {
+    "status": 502,
+    "json": {
+      "status": "error",
+      "code": 502,
+      "message": "Application failed to respond",
+      "request_id": "cqq4RmUfRlKI6PvKH4GxDA"
+    }
+  },
+  "fixDeploymentId": "079aeba8-31aa-45fb-9cfc-b0af5be4ee43"
+}
