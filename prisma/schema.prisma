@@ -84,8 +84,10 @@ model Keyword {
   term             String
   intent           String   @default("INFORMATIONAL") // INFORMATIONAL | COMMERCIAL | TRANSACTIONAL | NAVIGATIONAL
   funnelStage      String   @default("TOFU") // TOFU | MOFU | BOFU
-  monthlyVolume    Int      @default(0)
-  difficulty       Int      @default(0) // 0-100
+  monthlyVolume    Int      @default(0) // REAL search volume — only set from DataForSEO; 0 = unknown
+  difficulty       Int      @default(0) // REAL keyword difficulty — only set from DataForSEO; 0 = unknown
+  impressions      Int      @default(0) // REAL GSC impressions (90-day window)
+  clicks           Int      @default(0) // REAL GSC clicks (90-day window)
   currentPosition  Int      @default(0) // 0 = not ranking
   previousPosition Int      @default(0)
   targetUrl        String   @default("")

@@ -36,6 +36,55 @@ export async function ensureSeeded(): Promise<void> {
       // column already exists — expected on fresh databases
     }
 
+    // 2b. v1.9: Keyword.impressions + Keyword.clicks (real GSC numbers).
+    //     Existing databases need the columns added before the one-time
+    //     data fix below can run.
+    for (const col of ['impressions', 'clicks']) {
+      try {
+        await db.$executeRawUnsafe(`ALTER TABLE "Keyword" ADD COLUMN "${col}" INTEGER NOT NULL DEFAULT 0`)
+        console.log(`[ensure-seed] added Keyword.${col} column (v1.9 migration)`)
+      } catch {
+        // column already exists — expected on fresh databases
+      }
+    }
+
+    // 2c. v1.9 — ONE-TIME honest-numbers fix. Before v1.9 the GSC sync
+    //     stored Search Console IMPRESSIONS inside monthlyVolume (real
+    //     data, wrong label) and wrote heuristic scores (aeoValue 40/70,
+    //     geoValue 35, commercialValue) that looked like measured data.
+    //     The owner's rule: only real numbers are ever displayed. This
+    //     migration moves the real impressions into the new column,
+    //     resets monthlyVolume to 0 (real search volume is only known
+    //     via DataForSEO) and zeroes every heuristic score. Guarded by
+    //     a _Meta marker so it runs exactly once per database.
+    try {
+      await db.$executeRawUnsafe('CREATE TABLE IF NOT EXISTS "_Meta" ("key" TEXT NOT NULL PRIMARY KEY, "value" TEXT NOT NULL DEFAULT \'\')')
+      const markerV19 = await db.$queryRawUnsafe<Array<{ key: string }>>(
+        'SELECT "key" FROM "_Meta" WHERE "key" = \'gsc_honest_numbers_v1\'',
+      )
+      if (markerV19.length === 0) {
+        console.log('[ensure-seed] v1.9: fixing keyword numbers (one-time migration)')
+        // real impressions were stored under monthlyVolume for GSC rows
+        await db.$executeRawUnsafe(
+          `UPDATE "Keyword" SET "impressions" = "monthlyVolume" WHERE "source" = 'GSC' AND "impressions" = 0 AND "monthlyVolume" > 0`,
+        )
+        // real search volume is unknown until DataForSEO enrichment
+        await db.$executeRawUnsafe(
+          `UPDATE "Keyword" SET "monthlyVolume" = 0 WHERE "source" = 'GSC'`,
+        )
+        // heuristic scores are never real measurements — zero them all
+        await db.$executeRawUnsafe(
+          `UPDATE "Keyword" SET "aeoValue" = 0, "geoValue" = 0, "commercialValue" = 0`,
+        )
+        await db.$executeRawUnsafe(
+          'INSERT OR REPLACE INTO "_Meta" ("key", "value") VALUES (\'gsc_honest_numbers_v1\', \'1\')',
+        )
+        console.log('[ensure-seed] v1.9 honest-numbers fix complete')
+      }
+    } catch (v19Err) {
+      console.error('[ensure-seed] v1.9 honest-numbers migration failed:', v19Err)
+    }
+
     // 3. v1.8 — ONE-TIME PURGE of legacy demo data.
     //    Databases created before v1.8 were seeded with a synthetic demo
     //    dataset: content items with fake URLs that 404'd on the real

@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
 
     const keywords = await db.keyword.findMany({
       where: { brandId: brand.id },
-      orderBy: [{ currentPosition: 'asc' }, { monthlyVolume: 'desc' }],
+      orderBy: [{ currentPosition: 'asc' }, { impressions: 'desc' }],
     })
 
     return NextResponse.json({
@@ -52,7 +52,14 @@ export async function GET(req: NextRequest) {
         top10: keywords.filter((k) => k.currentPosition >= 1 && k.currentPosition <= 10).length,
         positions1120: keywords.filter((k) => k.currentPosition >= 11 && k.currentPosition <= 20).length,
         notRanking: keywords.filter((k) => k.currentPosition === 0).length,
+        // totalVolume only counts REAL DataForSEO volumes (0 until keys added)
         totalVolume: keywords.reduce((s, k) => s + k.monthlyVolume, 0),
+        // REAL GSC numbers (90-day window)
+        totalImpressions: keywords.reduce((s, k) => s + k.impressions, 0),
+        totalClicks: keywords.reduce((s, k) => s + k.clicks, 0),
+        // true only when at least one keyword carries a REAL DataForSEO volume
+        hasRealVolume: keywords.some((k) => k.monthlyVolume > 0),
+        hasRealDifficulty: keywords.some((k) => k.difficulty > 0),
         live: keywords.filter((k) => k.source === 'GSC' || k.source === 'DATAFORSEO').length,
         demo: keywords.filter((k) => k.source !== 'GSC' && k.source !== 'DATAFORSEO').length,
       },
@@ -122,11 +129,13 @@ export async function POST(req: NextRequest) {
               term: s.term,
               intent: s.intent,
               funnelStage: s.funnel,
+              // REAL DataForSEO numbers:
               monthlyVolume: s.volume,
               difficulty: s.difficulty,
-              commercialValue: s.intent === 'TRANSACTIONAL' ? 80 : s.intent === 'COMMERCIAL' ? 60 : 30,
-              aeoValue: 45,
-              geoValue: 40,
+              // heuristic scores stay 0 — never shown as measured data
+              commercialValue: 0,
+              aeoValue: 0,
+              geoValue: 0,
               status: 'TRACKING',
               source: 'DATAFORSEO',
             },

@@ -60,13 +60,14 @@ function toStr(v: unknown): string {
   return String(v)
 }
 
-/** GSC queries don't carry intent — infer a reasonable one. */
-function classifyIntent(term: string): { intent: string; funnel: string; commercialValue: number } {
+/** GSC queries don't carry intent — store a best-effort classification
+ *  for internal grouping only. It is never shown as measured data. */
+function classifyIntent(term: string): { intent: string; funnel: string } {
   const t = term.toLowerCase()
-  if (/\b(buy|order|shop|purchase|price|pricing|cheap|deal|discount)\b/.test(t)) return { intent: 'TRANSACTIONAL', funnel: 'BOFU', commercialValue: 85 }
-  if (/\b(best|top|vs\.?|versus|compare|comparison|alternative|review|recommend)\b/.test(t)) return { intent: 'COMMERCIAL', funnel: 'MOFU', commercialValue: 65 }
-  if (/^(what|how|why|when|which|who|is|are|does|can)\b/.test(t)) return { intent: 'INFORMATIONAL', funnel: 'TOFU', commercialValue: 25 }
-  return { intent: 'INFORMATIONAL', funnel: 'TOFU', commercialValue: 35 }
+  if (/\b(buy|order|shop|purchase|price|pricing|cheap|deal|discount)\b/.test(t)) return { intent: 'TRANSACTIONAL', funnel: 'BOFU' }
+  if (/\b(best|top|vs\.?|versus|compare|comparison|alternative|review|recommend)\b/.test(t)) return { intent: 'COMMERCIAL', funnel: 'MOFU' }
+  if (/^(what|how|why|when|which|who|is|are|does|can)\b/.test(t)) return { intent: 'INFORMATIONAL', funnel: 'TOFU' }
+  return { intent: 'INFORMATIONAL', funnel: 'TOFU' }
 }
 
 function isoDaysAgo(days: number): string {
@@ -140,8 +141,9 @@ export async function fetchGscQueries(days = 90, limit = 1000): Promise<{ rows: 
 
 /**
  * Import the real GSC queries into the keyword universe.
- * - new queries → bulk-created (source GSC, real position + impressions)
- * - existing terms → position/volume refreshed (delta kept via previousPosition)
+ * - new queries → bulk-created (source GSC, real position + impressions + clicks)
+ * - existing terms → position/impressions/clicks refreshed (delta kept via
+ *   previousPosition; monthlyVolume is only ever set by DataForSEO)
  */
 export async function syncGscKeywords(brandId: string, brandDomain: string, days = 90): Promise<SyncResult | SyncError> {
   const fetched = await fetchGscQueries(days)
@@ -160,7 +162,7 @@ export async function syncGscKeywords(brandId: string, brandDomain: string, days
   for (const q of rows) {
     const existing = existingByTerm.get(q.term)
     const pos = q.position && q.position > 0 ? Math.max(1, Math.round(q.position)) : 0
-    const { intent, funnel, commercialValue } = classifyIntent(q.term)
+    const { intent, funnel } = classifyIntent(q.term)
 
     if (!existing) {
       toCreate.push({
@@ -168,24 +170,32 @@ export async function syncGscKeywords(brandId: string, brandDomain: string, days
         term: q.term,
         intent,
         funnelStage: funnel,
-        monthlyVolume: q.impressions,
+        // HONEST DATA: GSC provides impressions + clicks + position.
+        // Real search volume / difficulty are only known via DataForSEO —
+        // they stay 0 (unknown) until that enrichment runs.
+        monthlyVolume: 0,
         difficulty: 0,
+        impressions: q.impressions,
+        clicks: q.clicks,
         currentPosition: pos,
         previousPosition: 0,
         targetUrl: '',
-        commercialValue,
-        aeoValue: /^(what|how|why|when|which|who|is|are|does|can)\b/i.test(q.term) ? 70 : 40,
-        geoValue: 35,
+        // heuristic scores are never displayed — keep 0 (no fake numbers)
+        commercialValue: 0,
+        aeoValue: 0,
+        geoValue: 0,
         status: 'TRACKING',
         source: 'GSC',
       })
       if (q.clicks > 0 || q.position) movers.push({ term: q.term, position: pos, clicks: q.clicks, delta: 0 })
     } else {
       const delta = existing.currentPosition > 0 && pos > 0 ? existing.currentPosition - pos : 0
-      const keepVolume = existing.source === 'DATAFORSEO' && existing.monthlyVolume > 0
+      // monthlyVolume is never touched here — it only ever holds REAL
+      // search volume from DataForSEO enrichment, not GSC impressions
       const needsUpdate =
         existing.currentPosition !== pos ||
-        (!keepVolume && existing.monthlyVolume !== q.impressions) ||
+        existing.impressions !== q.impressions ||
+        existing.clicks !== q.clicks ||
         (existing.source !== 'DATAFORSEO' && existing.source !== 'GSC')
       if (needsUpdate) {
         await db.keyword.update({
@@ -193,7 +203,8 @@ export async function syncGscKeywords(brandId: string, brandDomain: string, days
           data: {
             currentPosition: pos,
             previousPosition: existing.currentPosition || 0,
-            monthlyVolume: keepVolume ? existing.monthlyVolume : q.impressions,
+            impressions: q.impressions,
+            clicks: q.clicks,
             source: existing.source === 'DATAFORSEO' ? existing.source : 'GSC',
             status: 'TRACKING',
           },

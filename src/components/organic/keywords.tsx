@@ -4,14 +4,13 @@ import { useMemo, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
 import { Input } from '@/components/ui/input'
-import { Search, ArrowUp, ArrowDown, Minus, RefreshCw, Sparkles, Database, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Search, ArrowUp, ArrowDown, Minus, RefreshCw, Sparkles, Database, AlertTriangle, CheckCircle2, KeyRound } from 'lucide-react'
 import {
-  useApiData, LoadingGrid, ErrorBox, SectionHeader, KpiCard, fmtNum, humanize,
+  useApiData, LoadingGrid, ErrorBox, SectionHeader, KpiCard, fmtNum,
 } from './shared'
 
 interface KeywordRow {
@@ -19,8 +18,10 @@ interface KeywordRow {
   term: string
   intent: string
   funnelStage: string
-  monthlyVolume: number
-  difficulty: number
+  monthlyVolume: number // REAL search volume — DataForSEO only; 0 = unknown
+  difficulty: number // REAL keyword difficulty — DataForSEO only; 0 = unknown
+  impressions: number // REAL GSC impressions (90d)
+  clicks: number // REAL GSC clicks (90d)
   currentPosition: number
   previousPosition: number
   change: number
@@ -41,12 +42,14 @@ interface KeywordsData {
     positions1120: number
     notRanking: number
     totalVolume: number
+    totalImpressions?: number
+    totalClicks?: number
+    hasRealVolume?: boolean
+    hasRealDifficulty?: boolean
     live: number
     demo: number
   }
 }
-
-const INTENT_FILTERS = ['ALL', 'COMMERCIAL', 'INFORMATIONAL', 'TRANSACTIONAL']
 
 function SourceBadge({ source }: { source: string }) {
   if (source === 'GSC') {
@@ -240,33 +243,39 @@ function RealDataPanel({ brandSlug, onDone }: { brandSlug: string; onDone: () =>
 export function KeywordsView({ brandSlug }: { brandSlug: string }) {
   const { data, loading, error, refetch } = useApiData<KeywordsData>(`/api/keywords?brand=${brandSlug}`)
   const [query, setQuery] = useState('')
-  const [intent, setIntent] = useState('ALL')
 
   const filtered = useMemo(() => {
     if (!data) return []
     return data.keywords.filter(
-      (k) =>
-        (intent === 'ALL' || k.intent === intent) &&
-        (query === '' || k.term.toLowerCase().includes(query.toLowerCase()))
+      (k) => query === '' || k.term.toLowerCase().includes(query.toLowerCase())
     )
-  }, [data, query, intent])
+  }, [data, query])
 
   if (error) return <ErrorBox message={error} />
   if (loading || !data) return <LoadingGrid rows={6} />
 
   const s = data.summary
+  // Volume & Difficulty columns only exist once REAL DataForSEO numbers do —
+  // the owner's rule: never show placeholder metrics
+  const showVolume = !!s.hasRealVolume
+  const showDifficulty = !!s.hasRealDifficulty
+  const colCount = 4 + (showVolume ? 1 : 0) + (showDifficulty ? 1 : 0)
 
   return (
     <div className="space-y-5">
       <SectionHeader
         title="Keyword Universe"
-        description="Continuously updated from GSC, DataForSEO, SERPs, People Also Ask and AI query patterns. Positions 4-20 with strong expected return get priority — never chase volume alone."
+        description="Live from Google Search Console — the real queries visitors search, with real positions, impressions and clicks (90-day window). Search volume & keyword difficulty appear only when real DataForSEO data exists."
       />
 
       <RealDataPanel brandSlug={brandSlug} onDone={refetch} />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <KpiCard label="Tracked" value={s.total} sub={fmtNum(s.totalVolume) + ' total volume'} />
+        <KpiCard
+          label="Tracked"
+          value={s.total}
+          sub={s.hasRealVolume ? fmtNum(s.totalVolume) + ' total volume' : fmtNum(s.totalImpressions ?? 0) + ' impressions (90d)'}
+        />
         <KpiCard label="Top 3" value={s.top3} accent="positive" />
         <KpiCard label="Top 10" value={s.top10} accent="positive" />
         <KpiCard label="Positions 11-20" value={s.positions1120} sub="refresh sweet spot" />
@@ -289,18 +298,20 @@ export function KeywordsView({ brandSlug }: { brandSlug: string }) {
             className="h-9 pl-8 text-sm"
           />
         </div>
-        <Select value={intent} onValueChange={setIntent}>
-          <SelectTrigger className="h-9 w-[160px] text-xs">
-            <SelectValue placeholder="Intent" />
-          </SelectTrigger>
-          <SelectContent>
-            {INTENT_FILTERS.map((i) => (
-              <SelectItem key={i} value={i} className="text-xs">{i === 'ALL' ? 'All intents' : humanize(i)}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         <span className="text-xs text-muted-foreground">{filtered.length} shown</span>
       </div>
+
+      {!showVolume && (
+        <div className="flex items-start gap-2 rounded-md border border-dashed px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+          <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            <span className="font-medium">Volume & Difficulty are hidden until real data exists.</span>{' '}
+            They require the DataForSEO API — add your API login &amp; password on the API Keys page and they
+            will appear with real numbers only. Positions, impressions and clicks come from your live
+            Google Search Console connection.
+          </span>
+        </div>
+      )}
 
       <p className="-mt-1 text-[11px] text-muted-foreground sm:hidden">
         Swipe the table sideways to see positions & metrics →
@@ -313,17 +324,16 @@ export function KeywordsView({ brandSlug }: { brandSlug: string }) {
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-[38%] max-w-[330px]">Keyword</TableHead>
                 <TableHead className="w-[13%]">Position</TableHead>
-                <TableHead className="hidden sm:table-cell w-[13%]">Volume</TableHead>
-                <TableHead className="hidden md:table-cell w-[13%]">Difficulty</TableHead>
-                <TableHead className="hidden lg:table-cell w-[11%]">Intent</TableHead>
-                <TableHead className="hidden lg:table-cell w-[6%]">AEO</TableHead>
-                <TableHead className="hidden lg:table-cell w-[6%]">GEO</TableHead>
+                <TableHead className="hidden sm:table-cell w-[12%]" title="Real clicks from Google Search Console (90 days)">Clicks</TableHead>
+                <TableHead className="hidden sm:table-cell w-[13%]" title="Real impressions from Google Search Console (90 days)">Impressions</TableHead>
+                {showVolume ? <TableHead className="hidden lg:table-cell w-[12%]" title="Real monthly search volume (DataForSEO)">Volume</TableHead> : null}
+                {showDifficulty ? <TableHead className="hidden lg:table-cell w-[12%]" title="Real keyword difficulty (DataForSEO)">Difficulty</TableHead> : null}
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={7} className="py-12">
+                  <TableCell colSpan={colCount} className="py-12">
                     <div className="flex flex-col items-center justify-center gap-2 text-center">
                       <Search className="h-8 w-8 text-muted-foreground/40" />
                       <p className="text-sm font-semibold">No keywords tracked yet</p>
@@ -344,31 +354,22 @@ export function KeywordsView({ brandSlug }: { brandSlug: string }) {
                       <span className="text-sm font-medium leading-snug break-words whitespace-normal">{k.term}</span>
                       <div className="flex flex-wrap items-center gap-1.5">
                         <SourceBadge source={k.source} />
-                        {k.funnelStage ? <Badge variant="outline" className="text-[10px] text-muted-foreground">{k.funnelStage}</Badge> : null}
                       </div>
                     </div>
                   </TableCell>
                   <TableCell><PositionCell row={k} /></TableCell>
-                  <TableCell className="hidden sm:table-cell text-sm tabular-nums">{fmtNum(k.monthlyVolume)}</TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    <span className={`text-sm font-medium tabular-nums ${k.difficulty > 60 ? 'text-red-600 dark:text-red-400' : k.difficulty > 35 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                      {k.difficulty || '—'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    <Badge
-                      variant="outline"
-                      className={`text-[11px] ${
-                        k.intent === 'COMMERCIAL' || k.intent === 'TRANSACTIONAL'
-                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                          : 'border-border text-muted-foreground'
-                      }`}
-                    >
-                      {humanize(k.intent)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell text-sm tabular-nums text-muted-foreground">{k.aeoValue}</TableCell>
-                  <TableCell className="hidden lg:table-cell text-sm tabular-nums text-muted-foreground">{k.geoValue}</TableCell>
+                  <TableCell className="hidden sm:table-cell text-sm tabular-nums">{k.clicks > 0 ? fmtNum(k.clicks) : '—'}</TableCell>
+                  <TableCell className="hidden sm:table-cell text-sm tabular-nums">{k.impressions > 0 ? fmtNum(k.impressions) : '—'}</TableCell>
+                  {showVolume ? (
+                    <TableCell className="hidden lg:table-cell text-sm tabular-nums">{k.monthlyVolume > 0 ? fmtNum(k.monthlyVolume) : '—'}</TableCell>
+                  ) : null}
+                  {showDifficulty ? (
+                    <TableCell className="hidden lg:table-cell">
+                      <span className={`text-sm font-medium tabular-nums ${k.difficulty > 60 ? 'text-red-600 dark:text-red-400' : k.difficulty > 35 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        {k.difficulty > 0 ? k.difficulty : '—'}
+                      </span>
+                    </TableCell>
+                  ) : null}
                 </TableRow>
               ))
               )}

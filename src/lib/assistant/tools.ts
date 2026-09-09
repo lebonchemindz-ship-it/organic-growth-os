@@ -107,8 +107,14 @@ async function listKeywords(args: Record<string, unknown>, ctx: ToolContext): Pr
             ok: true,
             summary: `${kws.length} keywords (real GSC + research data, tracked positions first) — universe: ${s.total ?? kws.length} total, ${s.live ?? 0} live, ${s.top10 ?? 0} in top 10`,
             data: kws.slice(0, limit).map((k) => ({
-              term: k.term, intent: k.intent, funnel: k.funnelStage, volume: k.monthlyVolume,
-              difficulty: k.difficulty, position: k.currentPosition || null,
+              term: k.term, intent: k.intent, funnel: k.funnelStage,
+              // volume/difficulty are null when unknown (only real DataForSEO numbers are set)
+              volume: Number(k.monthlyVolume) > 0 ? Number(k.monthlyVolume) : null,
+              difficulty: Number(k.difficulty) > 0 ? Number(k.difficulty) : null,
+              // real GSC numbers (90-day window)
+              clicks: Number(k.clicks) > 0 ? Number(k.clicks) : null,
+              impressions: Number(k.impressions) > 0 ? Number(k.impressions) : null,
+              position: k.currentPosition || null,
               previous: k.previousPosition || null,
               delta: k.currentPosition && k.previousPosition ? Number(k.previousPosition) - Number(k.currentPosition) : null,
               source: k.source,
@@ -127,17 +133,22 @@ async function listKeywords(args: Record<string, unknown>, ctx: ToolContext): Pr
   if (args.maxPosition) where.currentPosition = { gt: 0, lte: Number(args.maxPosition) }
   const kws = await db.keyword.findMany({
     where,
-    orderBy: [{ currentPosition: 'asc' }, { monthlyVolume: 'desc' }],
+    orderBy: [{ currentPosition: 'asc' }, { impressions: 'desc' }],
     take: limit,
   })
   return {
     ok: true,
     summary: `${kws.length} keywords (tracked positions first)`,
     data: kws.map(k => ({
-      term: k.term, intent: k.intent, funnel: k.funnelStage, volume: k.monthlyVolume,
-      difficulty: k.difficulty, position: k.currentPosition || null,
+      term: k.term, intent: k.intent, funnel: k.funnelStage,
+      volume: k.monthlyVolume > 0 ? k.monthlyVolume : null,
+      difficulty: k.difficulty > 0 ? k.difficulty : null,
+      clicks: k.clicks > 0 ? k.clicks : null,
+      impressions: k.impressions > 0 ? k.impressions : null,
+      position: k.currentPosition || null,
       previous: k.previousPosition || null,
       delta: k.currentPosition && k.previousPosition ? k.previousPosition - k.currentPosition : null,
+      source: k.source,
     })),
   }
 }
@@ -362,13 +373,15 @@ async function addKeywords(args: Record<string, unknown>, ctx: ToolContext): Pro
         term,
         intent: typeof t === 'object' && (t as Record<string, unknown>).intent ? String((t as Record<string, unknown>).intent).toUpperCase() : 'INFORMATIONAL',
         funnelStage: typeof t === 'object' && (t as Record<string, unknown>).funnel ? String((t as Record<string, unknown>).funnel).toUpperCase() : 'TOFU',
-        monthlyVolume: Number(typeof t === 'object' ? (t as Record<string, unknown>).volume : 0) || 0,
-        difficulty: Number(typeof t === 'object' ? (t as Record<string, unknown>).difficulty : 0) || 0,
+        // HONEST DATA: manual ideas carry no real volume/difficulty —
+        // those only come from DataForSEO research. Always 0 here.
+        monthlyVolume: 0,
+        difficulty: 0,
         currentPosition: 0,
         previousPosition: 0,
-        commercialValue: 30,
-        aeoValue: 40,
-        geoValue: 30,
+        commercialValue: 0,
+        aeoValue: 0,
+        geoValue: 0,
         status: 'TRACKING',
         source: 'AGENT',
       },
@@ -427,11 +440,13 @@ async function researchKeywordsTool(args: Record<string, unknown>, ctx: ToolCont
         term: s.term,
         intent: s.intent,
         funnelStage: s.funnel,
+        // REAL DataForSEO numbers:
         monthlyVolume: s.volume,
         difficulty: s.difficulty,
-        commercialValue: s.intent === 'TRANSACTIONAL' ? 80 : s.intent === 'COMMERCIAL' ? 60 : 30,
-        aeoValue: 45,
-        geoValue: 40,
+        // heuristic scores stay 0 — never shown as measured data
+        commercialValue: 0,
+        aeoValue: 0,
+        geoValue: 0,
         status: 'TRACKING',
         source: 'DATAFORSEO',
       },
@@ -701,7 +716,7 @@ async function runSiteAudit(_args: Record<string, unknown>, ctx: ToolContext): P
 export const TOOLS: ToolDef[] = [
   { name: 'get_overview', description: 'KPI snapshot of the active brand: keywords tracked, top-10 count, opportunities, content, backlinks, AI visibility, pending approvals, open tasks, latest weekly report verdict.', args: '{}', execute: getOverview },
   { name: 'list_keywords', description: 'Keyword universe with positions and deltas. Filterable.', args: '{ "intent"?: "COMMERCIAL|INFORMATIONAL", "funnel"?: "TOFU|MOFU|BOFU", "maxPosition"?: number, "limit"?: number }', execute: listKeywords },
-  { name: 'add_keywords', description: 'Add new keyword ideas to the tracking universe (max 20) — MANUAL ideas only, no real volumes. Prefer research_keywords when real volumes matter.', args: '{ "terms": string[] | { term, intent?, funnel?, volume?, difficulty? }[] }', execute: addKeywords },
+  { name: 'add_keywords', description: 'Add new keyword ideas to the tracking universe (max 20) — MANUAL ideas only, stored WITHOUT volume/difficulty (those stay unknown until real DataForSEO research). Prefer research_keywords when real numbers matter.', args: '{ "terms": string[] | { term, intent?, funnel? }[] }', execute: addKeywords },
   { name: 'research_keywords', description: 'REAL keyword research via DataForSEO: returns search volume, keyword difficulty and intent for suggestions around a seed keyword AND adds them to the tracking universe. Requires working DataForSEO credentials — if it fails, tell the owner exactly what the error says and suggest sync_gsc_keywords as the free alternative.', args: '{ "seed": string, "limit"?: number }', execute: researchKeywordsTool },
   { name: 'sync_gsc_keywords', description: 'Import the REAL search queries from Google Search Console (via the connected Porter Metrics account) into the keyword universe — real positions, impressions and clicks for what the site already ranks for. Free (no DataForSEO needed). Use this before research when the owner wants real data fast.', args: '{}', execute: syncGscKeywordsTool },
   { name: 'list_opportunities', description: 'Decision-engine queue sorted by VALUE score with autonomy level.', args: '{ "status"?: "DISCOVERED|IN_PROGRESS|DONE", "type"?: "CONTENT|OUTREACH|GEO|TECHNICAL|AUTHORITY", "limit"?: number }', execute: listOpportunities },
