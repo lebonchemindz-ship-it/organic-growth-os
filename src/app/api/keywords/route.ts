@@ -198,13 +198,15 @@ export async function POST(req: NextRequest) {
       const volumeTerms = targets.filter((t) => t.monthlyVolume === 0).map((t) => t.term)
       const difficultyTerms = targets.filter((t) => t.difficulty === 0).map((t) => t.term)
 
-      const outcome = await fetchBulkKeywordMetrics(volumeTerms, difficultyTerms, { locationName })
+      const outcome = await fetchBulkKeywordMetrics(volumeTerms, difficultyTerms, { locationName, debug: Boolean(body.debug) })
+      const debugSamples = body.debug ? (outcome as unknown as { samples?: unknown }).samples : undefined
       if (!outcome.ok && outcome.metrics.size === 0) {
         const status = outcome.messages[0]?.includes('40100') ? 401 : 502
         return NextResponse.json({
           error: 'enrich_failed',
           message: outcome.messages[0] || 'DataForSEO bulk keyword lookup failed.',
           requested: targets.length,
+          samples: debugSamples,
         }, { status })
       }
 
@@ -253,6 +255,7 @@ export async function POST(req: NextRequest) {
         cost: outcome.cost,
         remaining,
         messages: outcome.messages.length > 0 ? outcome.messages : undefined,
+        samples: debugSamples,
         message: `${withVolume} keyword(s) now carry real search volume and ${withDifficulty} carry real difficulty (cost $${outcome.cost.toFixed(4)}). ${remaining} keyword(s) left to enrich.`,
       })
     }

@@ -300,30 +300,32 @@ async function bulkCall(
   terms: string[],
   locationName: string,
   languageName: string,
-): Promise<{ items: Record<string, unknown>[]; cost: number; statusCode: number | null; message: string | null }> {
+  debug = false,
+): Promise<{ items: Record<string, unknown>[]; cost: number; statusCode: number | null; message: string | null; sample: unknown }> {
   const res = await fetchWithTimeout(`${API}${path}`, {
     method: 'POST',
     headers: { authorization: authHeader(cfg), 'content-type': 'application/json' },
     body: JSON.stringify([{ location_name: locationName, language_name: languageName, keywords: terms }]),
   }, 60_000)
-  if (!res) return { items: [], cost: 0, statusCode: null, message: `Could not reach ${path} (network/timeout).` }
+  if (!res) return { items: [], cost: 0, statusCode: null, message: `Could not reach ${path} (network/timeout).`, sample: null }
   try {
     const data = await res.json() as { status_code?: number; status_message?: string; cost?: number; tasks?: LabsTask[] }
     const task = data.tasks?.[0]
     const code = data.status_code ?? task?.status_code ?? null
     const cost = num(data.cost) ?? 0
+    const sample = debug ? (task?.result?.[0] ?? null) : null
     if (code === 40100) {
-      return { items: [], cost, statusCode: 40100, message: 'Rejected (40100) — the DataForSEO API login/password is incorrect. Generate real API credentials at app.dataforseo.com → API Access.' }
+      return { items: [], cost, statusCode: 40100, message: 'Rejected (40100) — the DataForSEO API login/password is incorrect. Generate real API credentials at app.dataforseo.com → API Access.', sample }
     }
     if (code === 40202) {
-      return { items: [], cost, statusCode: 40202, message: 'Your DataForSEO account ran out of funds — top up at app.dataforseo.com.' }
+      return { items: [], cost, statusCode: 40202, message: 'Your DataForSEO account ran out of funds — top up at app.dataforseo.com.', sample }
     }
     if (code !== 20000) {
-      return { items: [], cost, statusCode: code, message: `DataForSEO ${path} failed (status ${code ?? res.status}: ${data.status_message || task?.status_message || 'unknown'}).` }
+      return { items: [], cost, statusCode: code, message: `DataForSEO ${path} failed (status ${code ?? res.status}: ${data.status_message || task?.status_message || 'unknown'}).`, sample }
     }
-    return { items: labItems(task), cost, statusCode: code, message: null }
+    return { items: labItems(task), cost, statusCode: code, message: null, sample }
   } catch {
-    return { items: [], cost: 0, statusCode: null, message: `DataForSEO ${path} responded with HTTP ${res.status} — not confirmed.` }
+    return { items: [], cost: 0, statusCode: null, message: `DataForSEO ${path} responded with HTTP ${res.status} — not confirmed.`, sample: null }
   }
 }
 
@@ -340,10 +342,12 @@ async function bulkCall(
 export async function fetchBulkKeywordMetrics(
   volumeTerms: string[],
   difficultyTerms: string[],
-  opts: { locationName?: string; languageName?: string } = {},
+  opts: { locationName?: string; languageName?: string; debug?: boolean } = {},
 ): Promise<BulkMetricsOutcome> {
   const metrics = new Map<string, BulkKeywordMetric>()
   const messages: string[] = []
+  const samples: Array<{ endpoint: string; result: unknown }> = []
+  const debug = Boolean(opts.debug)
   let cost = 0
 
   const auth = await checkDataForSeoAuth()
@@ -365,9 +369,10 @@ export async function fetchBulkKeywordMetrics(
   const languageName = (opts.languageName || 'English').trim()
 
   if (volumeTerms.length > 0) {
-    const volume = await bulkCall('/v3/dataforseo_labs/google/bulk_search_volume/live', cfg, volumeTerms, locationName, languageName)
+    const volume = await bulkCall('/v3/dataforseo_labs/google/bulk_search_volume/live', cfg, volumeTerms, locationName, languageName, debug)
     cost += volume.cost
     if (volume.message) messages.push(volume.message)
+    if (debug && volume.sample !== null) samples.push({ endpoint: 'labs_volume', result: volume.sample })
     for (const item of volume.items) {
       const kw = typeof item.keyword === 'string' ? item.keyword.toLowerCase() : ''
       if (!kw) continue
@@ -378,9 +383,10 @@ export async function fetchBulkKeywordMetrics(
   }
 
   if (difficultyTerms.length > 0) {
-    const difficulty = await bulkCall('/v3/dataforseo_labs/google/bulk_keyword_difficulty/live', cfg, difficultyTerms, locationName, languageName)
+    const difficulty = await bulkCall('/v3/dataforseo_labs/google/bulk_keyword_difficulty/live', cfg, difficultyTerms, locationName, languageName, debug)
     cost += difficulty.cost
     if (difficulty.message) messages.push(difficulty.message)
+    if (debug && difficulty.sample !== null) samples.push({ endpoint: 'difficulty', result: difficulty.sample })
     for (const item of difficulty.items) {
       const kw = typeof item.keyword === 'string' ? item.keyword.toLowerCase() : ''
       if (!kw) continue
@@ -394,10 +400,12 @@ export async function fetchBulkKeywordMetrics(
 
   const volumeCount = [...metrics.values()].filter((m) => m.volume > 0).length
   const difficultyCount = [...metrics.values()].filter((m) => m.difficulty > 0).length
-  return {
+  const outcome: BulkMetricsOutcome = {
     ok: volumeCount > 0 || difficultyCount > 0,
     metrics, volumeCount, difficultyCount, cost, messages,
   }
+  if (debug) (outcome as BulkMetricsOutcome & { samples?: unknown }).samples = samples
+  return outcome
 }
 
 /** Cheap intent/funnel heuristic (DataForSEO does not classify intent). */
