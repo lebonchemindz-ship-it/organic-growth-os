@@ -1,12 +1,14 @@
 'use client'
 
+import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Switch } from '@/components/ui/switch'
-import { Bot, MessageSquare, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Bot, MessageSquare, TrendingUp, TrendingDown, Minus, Play } from 'lucide-react'
 import {
-  useApiData, LoadingGrid, ErrorBox, SectionHeader, KpiCard, fmtDate,
+  useApiData, LoadingGrid, ErrorBox, SectionHeader, KpiCard, fmtDate, RealnessChip,
 } from './shared'
 
 interface AiPromptRow {
@@ -26,16 +28,20 @@ interface AiPromptRow {
 
 interface AiData {
   prompts: AiPromptRow[]
-  engineStats: Array<{ label: string; mentioned: number; total: number; rate: number }>
+  engineStats: Array<{ label: string; mentioned: number; total: number; rate: number; status: 'measured' | 'ready' | 'no_key' | 'n/a' }>
   summary: {
     totalPrompts: number
     mentioned: number
     mentionRate: number
+    real: boolean
+    checkedPrompts: number
+    lastCheckedAt: string | null
     improving: number
     declining: number
     commercial: number
     avgRankWhenMentioned: number
   }
+  canCheck: boolean
 }
 
 const ENGINES: Array<{ key: keyof AiPromptRow; label: string }> = [
@@ -52,8 +58,45 @@ function TrendIcon({ trend }: { trend: string }) {
   return <Minus className="h-3.5 w-3.5 text-muted-foreground" />
 }
 
+const ENGINE_STATUS_TEXT: Record<string, string> = {
+  measured: 'measured — live answers',
+  ready: 'key saved — not checked yet',
+  no_key: 'no API key saved',
+  'n/a': 'engine not integrated yet',
+}
+
 export function AiVisibilityView({ brandSlug }: { brandSlug: string }) {
-  const { data, loading, error } = useApiData<AiData>(`/api/ai-visibility?brand=${brandSlug}`)
+  const { data, loading, error, refetch } = useApiData<AiData>(`/api/ai-visibility?brand=${brandSlug}`)
+  const [checking, setChecking] = useState(false)
+  const [checkMsg, setCheckMsg] = useState<string | null>(null)
+
+  // run a LIVE mention check: real prompts from the real GSC queries are
+  // answered by the configured LLM and mentions are parsed from the answers
+  const runCheck = async () => {
+    setChecking(true)
+    setCheckMsg(null)
+    try {
+      const res = await fetch('/api/ai-visibility', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ brandSlug }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setCheckMsg(json.message || 'The live check could not run.')
+      } else {
+        setCheckMsg(
+          `Live check complete — ${json.promptsChecked} real prompts answered via ${json.provider === 'anthropic' ? 'Anthropic Claude' : json.provider === 'openai' ? 'OpenAI' : json.provider}. Your brand was mentioned in ${json.mentioned} (${json.mentionRate}%).`,
+        )
+        refetch()
+        window.dispatchEvent(new Event('og:data-changed'))
+      }
+    } catch {
+      setCheckMsg('The live check could not run — network error.')
+    } finally {
+      setChecking(false)
+    }
+  }
 
   if (error) return <ErrorBox message={error} />
   if (loading || !data) return <LoadingGrid rows={6} />
@@ -64,15 +107,41 @@ export function AiVisibilityView({ brandSlug }: { brandSlug: string }) {
     <div className="space-y-5">
       <SectionHeader
         title="GEO Engine — AI Visibility"
-        description="The system maintains a priority AI-query universe and measures brand mentions, recommendations and citations across ChatGPT, Gemini, Perplexity, Claude and Copilot. When the brand is missing, it diagnoses the gap: content, authority, entity clarity, evidence, reviews or citation sources."
+        description="The system measures brand mentions, recommendations and citations across the AI engines, using priority prompts built from your real Search Console queries. Each check asks a live LLM and records whether your brand is actually recommended — a low rate is a real measurement, not a bug: it is the gap this engine works on."
+        actions={
+          <Button size="sm" onClick={runCheck} disabled={checking || !data.canCheck} className="h-8 gap-1.5">
+            <Play className={`h-3.5 w-3.5 ${checking ? 'animate-pulse' : ''}`} />
+            {checking ? 'Asking the AI engines…' : 'Run live AI check'}
+          </Button>
+        }
       />
 
+      {!data.canCheck ? (
+        <p className="-mt-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+          No LLM key detected — save an Anthropic (Claude) or OpenAI key on the API Keys page to run live mention checks.
+        </p>
+      ) : null}
+      {checkMsg ? (
+        <p className="-mt-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs leading-relaxed text-emerald-700 dark:text-emerald-400">
+          {checkMsg}
+        </p>
+      ) : null}
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <KpiCard label="Mention rate" value={`${s.mentionRate}%`} sub={`${s.mentioned}/${s.totalPrompts} priority prompts`} icon={<Bot className="h-4 w-4" />} accent={s.mentionRate >= 40 ? 'positive' : 'warning'} />
-        <KpiCard label="Improving" value={s.improving} accent="positive" icon={<TrendingUp className="h-4 w-4" />} />
-        <KpiCard label="Declining" value={s.declining} accent="danger" icon={<TrendingDown className="h-4 w-4" />} />
-        <KpiCard label="Commercial prompts" value={s.commercial} sub="recommendation intent" />
-        <KpiCard label="Avg rank when cited" value={s.avgRankWhenMentioned || '—'} sub="position in answer" />
+        <KpiCard
+          label="Mention rate"
+          value={`${s.mentionRate}%`}
+          sub={s.real
+            ? `${s.mentioned}/${s.checkedPrompts} prompts · measured live${s.lastCheckedAt ? ` · ${fmtDate(s.lastCheckedAt)}` : ''}`
+            : 'run a live check — real LLM answers'}
+          icon={<Bot className="h-4 w-4" />}
+          accent={s.mentionRate >= 40 ? 'positive' : 'warning'}
+          real={s.real}
+        />
+        <KpiCard label="Improving" value={s.improving} accent="positive" icon={<TrendingUp className="h-4 w-4" />} real={s.real} />
+        <KpiCard label="Declining" value={s.declining} accent="danger" icon={<TrendingDown className="h-4 w-4" />} real={s.real} />
+        <KpiCard label="Commercial prompts" value={s.commercial} sub="recommendation intent" real={s.real} />
+        <KpiCard label="Avg rank when cited" value={s.avgRankWhenMentioned || '—'} sub="position in answer" real={s.real} />
       </div>
 
       {/* Engine coverage */}
@@ -86,12 +155,24 @@ export function AiVisibilityView({ brandSlug }: { brandSlug: string }) {
               <div key={e.label} className="rounded-lg border border-border/70 bg-muted/20 p-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">{e.label}</span>
-                  <span className={`text-sm font-bold tabular-nums ${e.rate > 40 ? 'text-emerald-600 dark:text-emerald-400' : e.rate > 20 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
-                    {e.rate}%
-                  </span>
+                  {e.status === 'measured' ? (
+                    <span className={`text-sm font-bold tabular-nums ${e.rate > 40 ? 'text-emerald-600 dark:text-emerald-400' : e.rate > 20 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {e.rate}%
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
                 </div>
-                <Progress value={e.rate} className="mt-2 h-1.5" />
-                <p className="mt-1.5 text-[11px] text-muted-foreground">{e.mentioned} of {e.total} prompts cite the brand</p>
+                {e.status === 'measured' ? (
+                  <Progress value={e.rate} className="mt-2 h-1.5" />
+                ) : (
+                  <div className="mt-2 h-1.5 rounded-full bg-muted" />
+                )}
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  {e.status === 'measured'
+                    ? `${e.mentioned} of ${e.total} prompts cite the brand`
+                    : ENGINE_STATUS_TEXT[e.status]}
+                </p>
               </div>
             ))}
           </div>
@@ -129,10 +210,10 @@ export function AiVisibilityView({ brandSlug }: { brandSlug: string }) {
                         <Bot className="h-8 w-8 text-muted-foreground/40" />
                         <p className="text-sm font-semibold">No AI queries tracked yet</p>
                         <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-                          This tracker shows where your brand is actually mentioned by ChatGPT, Perplexity,
-                          Gemini, Claude and Copilot. Ask the Growth Agent to build your priority
-                          AI-query universe from your real keywords — prompt rows appear only once
-                          they are genuinely tracked.
+                          This tracker shows where your brand is actually mentioned by the AI engines.
+                          Press “Run live AI check” — the system builds priority prompts from your
+                          real Search Console queries, asks the configured LLM and records the honest
+                          answer, rank and cited competitors. Rows appear only once genuinely measured.
                         </p>
                       </div>
                     </td>

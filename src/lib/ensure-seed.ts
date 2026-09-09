@@ -113,6 +113,26 @@ export async function ensureSeeded(): Promise<void> {
       console.error('[ensure-seed] v1.9b residue wipe failed:', v19bErr)
     }
 
+    // 2e. v1.10 — real growth engine provenance columns. Opportunities
+    //     generated from live GSC data, AiPrompts measured via real LLM
+    //     calls and ApprovalItems filed by the engine now carry a source
+    //     so the dashboard can badge them LIVE instead of DEMO. Also
+    //     links approval items to the opportunity they were filed for.
+    for (const [table, col, ddl] of [
+      ['Opportunity', 'source', `ALTER TABLE "Opportunity" ADD COLUMN "source" TEXT NOT NULL DEFAULT 'DEMO'`],
+      ['AiPrompt', 'source', `ALTER TABLE "AiPrompt" ADD COLUMN "source" TEXT NOT NULL DEFAULT 'DEMO'`],
+      ['ApprovalItem', 'source', `ALTER TABLE "ApprovalItem" ADD COLUMN "source" TEXT NOT NULL DEFAULT 'DEMO'`],
+      ['ApprovalItem', 'opportunityId', `ALTER TABLE "ApprovalItem" ADD COLUMN "opportunityId" TEXT NOT NULL DEFAULT ''`],
+      ['AiPrompt', 'checkedVia', `ALTER TABLE "AiPrompt" ADD COLUMN "checkedVia" TEXT NOT NULL DEFAULT ''`],
+    ] as Array<[string, string, string]>) {
+      try {
+        await db.$executeRawUnsafe(ddl)
+        console.log(`[ensure-seed] added ${table}.${col} column (v1.10 migration)`)
+      } catch {
+        // column already exists — expected on fresh databases
+      }
+    }
+
     // 3. v1.8 — ONE-TIME PURGE of legacy demo data.
     //    Databases created before v1.8 were seeded with a synthetic demo
     //    dataset: content items with fake URLs that 404'd on the real

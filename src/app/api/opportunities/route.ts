@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { ensureSeeded } from '@/lib/ensure-seed'
+import { generateOpportunitiesFromGsc } from '@/lib/growth-engine'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 export async function GET(req: NextRequest) {
   try {
@@ -52,6 +54,29 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ opportunity })
   } catch (e) {
     console.error('opportunity patch error', e)
+    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
+  }
+}
+
+// Run the real growth engine: turns the live GSC keyword universe
+// into scored opportunities (idempotent — one per keyword+type).
+// Striking-distance live-page refreshes are filed as RED actions in
+// the owner approval queue.
+export async function POST(req: NextRequest) {
+  try {
+    await ensureSeeded()
+    const body = await req.json().catch(() => ({}))
+    const brandSlug = String(body.brandSlug || 'holy_strips')
+    const brand = await db.brand.findUnique({ where: { slug: brandSlug } })
+    if (!brand) return NextResponse.json({ error: 'Brand not found' }, { status: 404 })
+
+    const result = await generateOpportunitiesFromGsc(brand.id)
+    if (!result.ok) {
+      return NextResponse.json({ error: result.code, message: result.message }, { status: 400 })
+    }
+    return NextResponse.json(result)
+  } catch (e) {
+    console.error('opportunities generate error', e)
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })
   }
 }

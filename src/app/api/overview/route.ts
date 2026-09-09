@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { ensureSeeded } from '@/lib/ensure-seed'
 import { fetchLiveStats } from '@/lib/porter-stats'
+import { fetchBacklinksSummary } from '@/lib/dataforseo'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -42,7 +43,14 @@ export async function GET(req: NextRequest) {
     const mentionedPrompts = aiPrompts.filter((p) =>
       p.chatgptMentioned || p.geminiMentioned || p.perplexityMentioned || p.claudeMentioned || p.copilotMentioned
     )
-    const aiMentionRate = aiPrompts.length > 0 ? Math.round((mentionedPrompts.length / aiPrompts.length) * 100) : 0
+    // REAL mention rate — only prompts measured via a live LLM call
+    // (source "LLM") are counted; unchecked prompts never inflate it
+    const llmPrompts = aiPrompts.filter((p) => p.source === 'LLM')
+    const rateBase = llmPrompts.length > 0 ? llmPrompts : aiPrompts
+    const mentionedLlm = rateBase.filter((p) =>
+      p.chatgptMentioned || p.geminiMentioned || p.perplexityMentioned || p.claudeMentioned || p.copilotMentioned
+    )
+    const aiMentionRate = rateBase.length > 0 ? Math.round((mentionedLlm.length / rateBase.length) * 100) : 0
 
     // autonomy mix
     const opportunities = await db.opportunity.findMany({
@@ -64,6 +72,19 @@ export async function GET(req: NextRequest) {
 
     const live = await fetchLiveStats(28).catch(() => null)
     const realTraffic = Boolean(live?.connected && (live.gsc.available || live.ga4.available))
+
+    // ---------- REAL referring domains (DataForSEO Backlinks API) ----------
+    // Falls back to the local outreach-acquired backlink count (0) when
+    // DataForSEO keys are missing/invalid — and says so honestly.
+    const backlinksLive = await fetchBacklinksSummary(brand.domain).catch(() => null)
+    const realReferringDomains = backlinksLive?.ok && backlinksLive.referringDomains !== null
+    const lastMentionCheck = llmPrompts.length > 0
+      ? llmPrompts.reduce((max, p) => (p.lastCheckedAt > max ? p.lastCheckedAt : max), llmPrompts[0].lastCheckedAt)
+      : null
+    const pendingRealOpps = await db.opportunity.count({
+      where: { brandId: brand.id, status: { in: ['DISCOVERED', 'VERIFIED', 'PRIORITIZED'] }, source: 'GSC' },
+    })
+    const engineApprovals = await db.approvalItem.count({ where: { brandId: brand.id, source: 'ENGINE' } })
     const realClicks = live?.gsc.available ? live.gsc.totals.clicks : null
     const realImpressions = live?.gsc.available ? live.gsc.totals.impressions : null
     const realCtr = live?.gsc.available ? Number(live.gsc.totals.ctr.toFixed(2)) : null
@@ -100,7 +121,7 @@ export async function GET(req: NextRequest) {
         top10,
         trackedKeywords: keywordCount,
         realTrackedKeywords: realKeywordCount,
-        referringDomains: backlinks,
+        referringDomains: realReferringDomains ? (backlinksLive?.referringDomains ?? backlinks) : backlinks,
         aiMentionRate,
         pendingOpportunities,
         activeOpportunities: opportunityCount,
@@ -115,10 +136,17 @@ export async function GET(req: NextRequest) {
         top3: realKeywordCount > 0,
         top10: realKeywordCount > 0,
         trackedKeywords: realKeywordCount > 0,
-        referringDomains: false,
-        aiMentionRate: false,
-        pendingOpportunities: false,
-        pendingApprovals: false,
+        referringDomains: realReferringDomains,
+        aiMentionRate: llmPrompts.length > 0,
+        pendingOpportunities: pendingRealOpps > 0,
+        pendingApprovals: engineApprovals > 0,
+      },
+      // honest context for the KPI cards (what backs each number)
+      kpiNotes: {
+        referringDomains: backlinksLive?.message ?? null,
+        aiMentionRate: lastMentionCheck
+          ? `${llmPrompts.length} prompts measured via live LLM answers (last: ${lastMentionCheck.toISOString().slice(0, 10)})`
+          : null,
       },
       live: {
         traffic: realTraffic,

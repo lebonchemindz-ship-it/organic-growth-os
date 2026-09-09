@@ -12,7 +12,7 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
-import { Sparkles, Filter, ChevronRight } from 'lucide-react'
+import { Sparkles, Filter, ChevronRight, RefreshCw } from 'lucide-react'
 import {
   useApiData, AutonomyBadge, StatusBadge, TypeBadge, LoadingGrid, ErrorBox,
   SectionHeader, ScoreBar, fmtDate, humanize,
@@ -54,10 +54,42 @@ const TYPE_FILTERS = ['ALL', 'CONTENT', 'REFRESH', 'TECHNICAL_SEO', 'INTERNAL_LI
 const AUTONOMY_FILTERS = ['ALL', 'GREEN', 'YELLOW', 'RED']
 
 export function OpportunitiesView({ brandSlug }: { brandSlug: string }) {
-  const { data, loading, error } = useApiData<OpportunitiesData>(`/api/opportunities?brand=${brandSlug}`)
+  const { data, loading, error, refetch } = useApiData<OpportunitiesData>(`/api/opportunities?brand=${brandSlug}`)
   const [typeFilter, setTypeFilter] = useState('ALL')
   const [autonomyFilter, setAutonomyFilter] = useState('ALL')
   const [selected, setSelected] = useState<Opportunity | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [genMsg, setGenMsg] = useState<string | null>(null)
+
+  // run the real growth engine: scores the live GSC keyword universe
+  // into opportunities (idempotent) and files RED refreshes for approval
+  const runEngine = async () => {
+    setGenerating(true)
+    setGenMsg(null)
+    try {
+      const res = await fetch('/api/opportunities', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ brandSlug, action: 'generate' }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setGenMsg(json.message || 'The engine could not run — is Search Console synced?')
+      } else {
+        setGenMsg(
+          json.created > 0
+            ? `Engine analyzed ${json.keywordsAnalyzed} live GSC keywords → ${json.created} new opportunities${json.redFiled > 0 ? ` · ${json.redFiled} RED action${json.redFiled > 1 ? 's' : ''} filed for your approval` : ''}`
+            : `Engine analyzed ${json.keywordsAnalyzed} live GSC keywords — every eligible opportunity is already in the queue`,
+        )
+        refetch()
+        window.dispatchEvent(new Event('og:data-changed'))
+      }
+    } catch {
+      setGenMsg('The engine could not run — network error.')
+    } finally {
+      setGenerating(false)
+    }
+  }
 
   const filtered = useMemo(() => {
     if (!data) return []
@@ -78,6 +110,15 @@ export function OpportunitiesView({ brandSlug }: { brandSlug: string }) {
         description="Every opportunity is scored by VALUE = Impact × Probability × Confidence × Strategic Value × Urgency, adjusted downward for effort, cost and risk. GREEN and qualifying YELLOW actions execute autonomously; RED actions wait for you."
         actions={
           <>
+            <Button
+              size="sm"
+              onClick={runEngine}
+              disabled={generating}
+              className="h-8 gap-1.5"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${generating ? 'animate-spin' : ''}`} />
+              {generating ? 'Running engine…' : 'Generate from GSC data'}
+            </Button>
             <Badge variant="outline" className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
               <Sparkles className="h-3 w-3" /> avg score {data.summary.avgScore}
             </Badge>
@@ -85,6 +126,12 @@ export function OpportunitiesView({ brandSlug }: { brandSlug: string }) {
           </>
         }
       />
+
+      {genMsg ? (
+        <p className="-mt-2 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-xs leading-relaxed text-emerald-700 dark:text-emerald-400">
+          {genMsg}
+        </p>
+      ) : null}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
@@ -139,10 +186,10 @@ export function OpportunitiesView({ brandSlug }: { brandSlug: string }) {
                       <Sparkles className="h-8 w-8 text-muted-foreground/40" />
                       <p className="text-sm font-semibold">No opportunities in the queue yet</p>
                       <p className="max-w-md text-xs leading-relaxed text-muted-foreground">
-                        Opportunities are real, data-backed actions — never placeholder ideas. They appear
-                        here once the Growth Agent analyzes your Search Console data and site. Ask it to
-                        “find growth opportunities from my Search Console data” to populate this queue
-                        with actions grounded in your real rankings.
+                        Opportunities are real, data-backed actions — never placeholder ideas. Run the engine
+                        with the button above (or sync your keywords): it scores every live Search Console
+                        query — striking-distance rankings, CTR gaps, page-2 pushes — and files risky
+                        live-page refreshes as RED actions for your approval.
                       </p>
                     </div>
                   </TableCell>

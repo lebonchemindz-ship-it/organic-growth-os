@@ -297,6 +297,18 @@ export async function ensureGscMaterialized(brandId: string, brandDomain: string
       materializedAt.set(brandId, Date.now())
       if (r.ok) {
         console.log(`[gsc-keywords] materialized ${r.added} new + ${r.updated} updated GSC keywords for ${brandDomain}`)
+        // v1.10 — the real growth engine runs right after a successful GSC
+        // sync: opportunities are (re)generated from the fresh keyword
+        // metrics. Idempotent + best-effort: it never breaks the read path.
+        try {
+          const { generateOpportunitiesFromGsc } = await import('@/lib/growth-engine')
+          const gen = await generateOpportunitiesFromGsc(brandId)
+          if (gen.ok && gen.created > 0) {
+            console.log(`[gsc-keywords] growth engine created ${gen.created} opportunities (${gen.redFiled} RED filed)`)
+          }
+        } catch (engineErr) {
+          console.error('[gsc-keywords] growth engine pass failed:', engineErr instanceof Error ? engineErr.message : engineErr)
+        }
       }
     } catch (e) {
       console.error('[gsc-keywords] materialization failed:', e instanceof Error ? e.message : e)

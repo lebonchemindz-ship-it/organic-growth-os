@@ -57,6 +57,10 @@ interface OverviewData {
     pendingOpportunities: boolean
     pendingApprovals: boolean
   }
+  kpiNotes?: {
+    referringDomains: string | null
+    aiMentionRate: string | null
+  }
   live?: {
     traffic: boolean
     clicks: number | null
@@ -119,7 +123,7 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
     )
   }
 
-  const { brand, kpis, kpiReal, live, realHistory, autonomyMix, weeklyHistory, latestReport, recentEvents } = data
+  const { brand, kpis, kpiReal, kpiNotes, live, realHistory, autonomyMix, weeklyHistory, latestReport, recentEvents } = data
   const history = realHistory && realHistory.length > 0 ? realHistory : weeklyHistory
   const chartData = history.map((w) => ({
     ...w,
@@ -232,14 +236,16 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
         <KpiCard
           label="Referring Domains"
           value={kpis.referringDomains}
-          sub="active quality backlinks"
+          sub={kpiReal?.referringDomains
+            ? `live profile · ${brand.domain}`
+            : 'needs valid DataForSEO API keys'}
           icon={<Link2 className="h-4 w-4" />}
           real={kpiReal?.referringDomains}
         />
         <KpiCard
           label="AI Mention Rate"
           value={`${kpis.aiMentionRate}%`}
-          sub="across priority LLM prompts"
+          sub={kpiReal?.aiMentionRate && kpiNotes?.aiMentionRate ? kpiNotes.aiMentionRate : 'run a live check — GEO Engine'}
           icon={<Bot className="h-4 w-4" />}
           accent={kpis.aiMentionRate >= 40 ? 'positive' : 'warning'}
           real={kpiReal?.aiMentionRate}
@@ -247,14 +253,16 @@ export function DashboardView({ brandSlug }: { brandSlug: string }) {
         <KpiCard
           label="Open Opportunities"
           value={kpis.pendingOpportunities}
-          sub={`${kpis.activeOpportunities} in engine`}
+          sub={kpiReal?.pendingOpportunities
+            ? `${kpis.activeOpportunities} in engine · from live GSC data`
+            : 'engine runs after keyword sync'}
           icon={<Sparkles className="h-4 w-4" />}
           real={kpiReal?.pendingOpportunities}
         />
         <KpiCard
           label="Owner Approvals"
           value={kpis.pendingApprovals}
-          sub="RED actions waiting"
+          sub={kpiReal?.pendingApprovals ? 'RED actions waiting' : 'engine files RED actions here'}
           icon={<AlertTriangle className="h-4 w-4" />}
           accent={kpis.pendingApprovals > 0 ? 'danger' : 'default'}
           real={kpiReal?.pendingApprovals}

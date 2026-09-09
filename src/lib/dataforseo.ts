@@ -126,6 +126,99 @@ export async function checkDataForSeoAuth(force = false): Promise<AuthCheck> {
   }
 }
 
+// ------------------------------------------------------------
+// REAL BACKLINK PROFILE — Backlinks Summary API
+// Used by the dashboard "Referring Domains" KPI. Costs a fraction
+// of a cent per call, cached 6h per domain per warm instance.
+// ------------------------------------------------------------
+
+export interface BacklinksSummary {
+  ok: boolean
+  /** live count of unique referring domains pointing at the target */
+  referringDomains: number | null
+  /** live total backlinks count */
+  backlinks: number | null
+  message: string
+}
+
+let backlinksCache = new Map<string, { summary: BacklinksSummary; ts: number }>()
+const BACKLINKS_TTL_MS = 6 * 60 * 60_000
+
+export async function fetchBacklinksSummary(domain: string, force = false): Promise<BacklinksSummary> {
+  const key = domain.toLowerCase()
+  if (!force) {
+    const hit = backlinksCache.get(key)
+    if (hit && Date.now() - hit.ts < BACKLINKS_TTL_MS) return hit.summary
+  }
+
+  // fail fast on bad/missing credentials so we never charge a doomed call
+  const auth = await checkDataForSeoAuth()
+  if (!auth.ok) {
+    const summary: BacklinksSummary = { ok: false, referringDomains: null, backlinks: null, message: auth.message }
+    backlinksCache.set(key, { summary, ts: Date.now() })
+    return summary
+  }
+
+  const cfg = await getDataForSeoConfig()
+  if (!cfg) {
+    const summary: BacklinksSummary = { ok: false, referringDomains: null, backlinks: null, message: 'No DataForSEO credentials saved.' }
+    backlinksCache.set(key, { summary, ts: Date.now() })
+    return summary
+  }
+
+  const res = await fetchWithTimeout(`${API}/v3/backlinks/summary/live`, {
+    method: 'POST',
+    headers: { authorization: authHeader(cfg), 'content-type': 'application/json' },
+    body: JSON.stringify([{ target: domain, mode: 'as_is' }]),
+  }, 30_000)
+
+  if (!res) {
+    const summary: BacklinksSummary = { ok: false, referringDomains: null, backlinks: null, message: 'Could not reach api.dataforseo.com (network/timeout).' }
+    backlinksCache.set(key, { summary, ts: Date.now() })
+    return summary
+  }
+
+  try {
+    const data = await res.json() as {
+      status_code?: number
+      status_message?: string
+      tasks?: Array<{
+        status_code?: number
+        status_message?: string
+        result?: Array<Record<string, unknown>>
+      }>
+    }
+    const rootCode = data.status_code ?? null
+    const taskCode = data.tasks?.[0]?.status_code ?? null
+    if (rootCode === 40100 || taskCode === 40100) {
+      const summary: BacklinksSummary = { ok: false, referringDomains: null, backlinks: null, message: 'Rejected (40100) — the DataForSEO API login/password is incorrect. Generate real API credentials at app.dataforseo.com → API Access.' }
+      backlinksCache.set(key, { summary, ts: Date.now() })
+      return summary
+    }
+    if (rootCode === 40202 || taskCode === 40202) {
+      const summary: BacklinksSummary = { ok: false, referringDomains: null, backlinks: null, message: 'Your DataForSEO account ran out of funds — top up at app.dataforseo.com.' }
+      backlinksCache.set(key, { summary, ts: Date.now() })
+      return summary
+    }
+    const result = data.tasks?.[0]?.result?.[0]
+    const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+    const referringDomains = num(result?.referring_domains)
+    const backlinks = num(result?.backlinks)
+    if (referringDomains === null) {
+      const summary: BacklinksSummary = { ok: false, referringDomains: null, backlinks: null, message: `DataForSEO returned no backlink summary for ${domain} (status ${rootCode ?? res.status}).` }
+      backlinksCache.set(key, { summary, ts: Date.now() })
+      return summary
+    }
+    const summary: BacklinksSummary = { ok: true, referringDomains, backlinks, message: `Live backlink profile for ${domain} via DataForSEO.` }
+    backlinksCache.set(key, { summary, ts: Date.now() })
+    return summary
+  } catch {
+    const summary: BacklinksSummary = { ok: false, referringDomains: null, backlinks: null, message: `DataForSEO responded with HTTP ${res.status} — not confirmed.` }
+    backlinksCache.set(key, { summary, ts: Date.now() })
+    return summary
+  }
+}
+
 /** Cheap intent/funnel heuristic (DataForSEO does not classify intent). */
 function classify(term: string): { intent: KeywordSuggestion['intent']; funnel: KeywordSuggestion['funnel'] } {
   const t = term.toLowerCase()

@@ -46,17 +46,40 @@ export async function PATCH(req: NextRequest) {
       },
     })
 
-    // if approved, link the related opportunity to execution
+    // if approved, release the linked opportunity for execution
+    // (v1.10: engine-filed approval items carry the opportunityId)
     if (decision === 'APPROVED') {
+      if (item.opportunityId) {
+        try {
+          await db.opportunity.update({
+            where: { id: item.opportunityId },
+            data: { status: 'SCHEDULED' },
+          })
+        } catch {
+          // linked opportunity may have been deleted — ignore
+        }
+      }
       await db.systemEvent.create({
         data: {
           brandId: item.brandId,
           type: 'APPROVAL',
           level: 'INFO',
           message: `Owner APPROVED: ${item.title}`,
-          meta: 'RED action released for execution. Daily loop continues.',
+          meta: item.opportunityId
+            ? 'RED action released — linked opportunity moved to SCHEDULED.'
+            : 'RED action released for execution. Daily loop continues.',
         },
       })
+    }
+    if (decision === 'REJECTED' && item.opportunityId) {
+      try {
+        await db.opportunity.update({
+          where: { id: item.opportunityId },
+          data: { status: 'REJECTED' },
+        })
+      } catch {
+        // linked opportunity may have been deleted — ignore
+      }
     }
 
     return NextResponse.json({ item })

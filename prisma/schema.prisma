@@ -131,6 +131,7 @@ model Opportunity {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   completedAt       DateTime?
+  source            String   @default("DEMO") // DEMO | GSC | AGENT - GSC = generated from real Search Console data
 
   @@index([brandId, status])
   @@index([brandId, opportunityScore])
@@ -227,6 +228,8 @@ model AiPrompt {
   rankWhenMentioned Int      @default(0)
   trend             String   @default("FLAT") // IMPROVING | FLAT | DECLINING
   competitorMentioned String @default("")
+  source            String   @default("DEMO") // DEMO | LLM - LLM = measured via a real LLM API call
+  checkedVia        String   @default("") // provider that answered: anthropic | openai | zai
   lastCheckedAt     DateTime @default(now())
   createdAt         DateTime @default(now())
 
@@ -249,6 +252,8 @@ model ApprovalItem {
   requestedAt  DateTime  @default(now())
   status       String    @default("PENDING") // PENDING | APPROVED | REJECTED
   decidedAt    DateTime?
+  source       String    @default("DEMO") // DEMO | ENGINE - ENGINE = filed by the growth engine from real GSC data
+  opportunityId String   @default("") // linked Opportunity id when filed for one
 
   @@index([brandId, status])
 }
