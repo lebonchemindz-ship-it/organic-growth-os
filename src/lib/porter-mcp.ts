@@ -530,3 +530,154 @@ export function connectPorterAccount(connector: string): Promise<PorterCallOutco
 export async function testPorterConnection(): Promise<PorterCallOutcome> {
   return porterToolCall('whoami', {}, { timeoutMs: 25_000 })
 }
+
+// ------------------------------------------------------------
+// Correct query_data layer (v1.6)
+// The real query_data contract (verified against the live MCP
+// server, 2026-09): accounts is a REQUIRED ARRAY of account ids,
+// the date range is an OBJECT {date_from, date_to} (or a preset),
+// metrics/dimensions take the FIELD IDS from list_fields, and
+// results come back as {columns: [{id}], rows: [[…]], row_count}.
+// ------------------------------------------------------------
+
+export interface PorterQueryParams {
+  connector: string
+  /** account ids verbatim from list_accounts */
+  accounts: string[]
+  /** field ids from discoverConnectorFields */
+  metrics: string[]
+  dimensions: string[]
+  dateFrom: string // YYYY-MM-DD
+  dateTo: string // YYYY-MM-DD
+  limit?: number
+  /** optional field id to sort by (descending by default) */
+  orderBy?: string
+  orderDir?: 'asc' | 'desc'
+}
+
+export interface PorterQueryOutcome {
+  ok: boolean
+  rows?: Array<Record<string, unknown>>
+  rowCount?: number
+  truncated?: boolean
+  error?: { message?: string; hint?: string }
+}
+
+export interface ConnectorFields {
+  metrics: string[]
+  dimensions: string[]
+}
+
+/** Field ids (not display names) for a connector, split into metrics/dimensions. */
+export async function discoverConnectorFields(connector: string): Promise<ConnectorFields> {
+  const r = await porterToolCall('list_fields', { connector }, { timeoutMs: 30_000 })
+  if (!r.ok) return { metrics: [], dimensions: [] }
+  const metrics: string[] = []
+  const dimensions: string[] = []
+  for (const f of unwrapPorterList(r.data)) {
+    const id = String(f.id ?? f.name ?? f.field ?? f.field_name ?? '')
+    if (!id) continue
+    const kind = String(f.type ?? f.field_type ?? f.category ?? '')
+    if (/dimension/i.test(kind)) dimensions.push(id)
+    else if (/metric/i.test(kind)) metrics.push(id)
+  }
+  return { metrics, dimensions }
+}
+
+/** Pick the first field id matching any pattern. */
+export function pickField(pool: string[], patterns: RegExp[]): string | null {
+  for (const p of patterns) {
+    const hit = pool.find((f) => p.test(f))
+    if (hit) return hit
+  }
+  return null
+}
+
+function toNumber(v: unknown): number {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string') {
+    const n = Number(v.replace(/,/g, ''))
+    if (Number.isFinite(n)) return n
+  }
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    const inner = o.value ?? o.numericValue ?? o.metricValue
+    if (inner !== undefined) return toNumber(inner)
+  }
+  return 0
+}
+
+/**
+ * Normalize any query_data payload into flat row objects keyed by field id.
+ * Handles: {columns, rows: [[…]]} (the live shape), GA4-style
+ * dimensionValues/metricValues, and plain arrays of objects.
+ */
+export function normalizeQueryRows(data: unknown): Array<Record<string, unknown>> {
+  if (!data || typeof data !== 'object') return []
+  const o = data as Record<string, unknown>
+
+  // shape 1 (verified live): {columns: [{id, name}], rows: [["1.0", …]]}
+  if (Array.isArray(o.columns) && Array.isArray(o.rows)) {
+    const ids = o.columns.map((c) => {
+      if (typeof c === 'string') return c
+      if (c && typeof c === 'object') return String((c as Record<string, unknown>).id ?? (c as Record<string, unknown>).name ?? '')
+      return ''
+    })
+    return (o.rows as unknown[])
+      .filter((r) => Array.isArray(r))
+      .map((r) => {
+        const row: Record<string, unknown> = {}
+        ;(r as unknown[]).forEach((v, i) => {
+          if (ids[i]) row[ids[i]] = typeof v === 'string' ? v : v
+        })
+        return row
+      })
+  }
+
+  // shape 2: array of objects (flat or GA4-style)
+  let rows: unknown = Array.isArray(data) ? data : o.rows ?? o.data ?? o.results ?? o.items ?? [o]
+  if (!Array.isArray(rows)) return []
+  return (rows as unknown[])
+    .filter((r) => r && typeof r === 'object' && !Array.isArray(r))
+    .map((r) => {
+      const row = r as Record<string, unknown>
+      const dimVals = row.dimensionValues
+      const metVals = row.metricValues
+      if (Array.isArray(dimVals) || Array.isArray(metVals)) {
+        const dimHeaders = Array.isArray(row.dimensionHeaders) ? row.dimensionHeaders.map((h) => String((h as Record<string, unknown>).name)) : []
+        const metHeaders = Array.isArray(row.metricHeaders) ? row.metricHeaders.map((h) => String((h as Record<string, unknown>).name)) : []
+        const flat: Record<string, unknown> = {}
+        if (Array.isArray(dimVals)) dimVals.forEach((v, i) => { if (dimHeaders[i]) flat[dimHeaders[i]] = typeof v === 'object' && v ? String((v as Record<string, unknown>).value ?? v) : v })
+        if (Array.isArray(metVals)) metVals.forEach((v, i) => { if (metHeaders[i]) flat[metHeaders[i]] = toNumber(v) })
+        return flat
+      }
+      return row
+    })
+}
+
+/** Run a query_data call with the correct parameter shape. */
+export async function porterQuery(params: PorterQueryParams): Promise<PorterQueryOutcome> {
+  const r = await porterToolCall('query_data', {
+    connector: params.connector,
+    accounts: params.accounts,
+    metrics: params.metrics,
+    dimensions: params.dimensions,
+    date_range: { date_from: params.dateFrom, date_to: params.dateTo },
+    limit: params.limit ?? 1000,
+    ...(params.orderBy ? { order_by: [{ field: params.orderBy, direction: params.orderDir ?? 'desc' }] } : {}),
+  }, { timeoutMs: 55_000 })
+  if (!r.ok) return { ok: false, error: r.error }
+  const data = r.data as Record<string, unknown> | null
+  const rows = normalizeQueryRows(data)
+  const coverage = data && typeof data === 'object' ? (data as Record<string, unknown>).coverage : null
+  const emptyNote = coverage && typeof coverage === 'object'
+    ? String((coverage as Record<string, unknown>).note ?? '')
+    : ''
+  return {
+    ok: true,
+    rows,
+    rowCount: typeof data?.row_count === 'number' ? (data.row_count as number) : rows.length,
+    truncated: Boolean(data?.truncated),
+    error: rows.length === 0 && emptyNote ? { message: emptyNote } : undefined,
+  }
+}

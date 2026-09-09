@@ -8,6 +8,8 @@
 // ============================================================
 
 import { db } from '@/lib/db'
+import { researchKeywords } from '@/lib/dataforseo'
+import { syncGscKeywords } from '@/lib/gsc-keywords'
 
 export interface ToolContext {
   brandId: string
@@ -273,12 +275,79 @@ async function addKeywords(args: Record<string, unknown>, ctx: ToolContext): Pro
         aeoValue: 40,
         geoValue: 30,
         status: 'TRACKING',
+        source: 'AGENT',
       },
     })
     created.push(kw.term)
   }
   await logEvent(ctx, 'KEYWORDS_ADDED', `Agent added ${created.length} keywords to the universe`, created.join(', '))
   return { ok: true, summary: `${created.length} keywords added (duplicates skipped).`, data: { added: created } }
+}
+
+// Real keyword research via DataForSEO (when the credentials work).
+// Returns actionable guidance when they don't.
+async function researchKeywordsTool(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const seed = String(args.seed || '').trim()
+  if (!seed) return { ok: false, summary: 'research_keywords requires a seed keyword.' }
+  const limit = Math.min(Number(args.limit) || 20, 25)
+  const r = await researchKeywords(seed, { limit })
+  if (!r.ok) {
+    await logEvent(ctx, 'RESEARCH_BLOCKED', `DataForSEO research for "${seed}" failed: ${r.message}`)
+    return { ok: false, summary: `Keyword research unavailable: ${r.message}`, data: { code: r.code } }
+  }
+  // add the researched keywords to the universe with REAL volume + difficulty
+  const added: string[] = []
+  for (const s of r.suggestions.slice(0, 20)) {
+    const exists = await db.keyword.findFirst({ where: { brandId: ctx.brandId, term: s.term } })
+    if (exists) continue
+    await db.keyword.create({
+      data: {
+        brandId: ctx.brandId,
+        term: s.term,
+        intent: s.intent,
+        funnelStage: s.funnel,
+        monthlyVolume: s.volume,
+        difficulty: s.difficulty,
+        commercialValue: s.intent === 'TRANSACTIONAL' ? 80 : s.intent === 'COMMERCIAL' ? 60 : 30,
+        aeoValue: 45,
+        geoValue: 40,
+        status: 'TRACKING',
+        source: 'DATAFORSEO',
+      },
+    })
+    added.push(s.term)
+  }
+  await logEvent(ctx, 'KEYWORDS_RESEARCHED', `DataForSEO research on "${seed}": ${added.length} real keywords added (volumes + difficulty)`, r.suggestions.slice(0, 10).map(s => `${s.term} (${s.volume}/mo, KD ${s.difficulty})`).join(', '))
+  return {
+    ok: true,
+    summary: `Researched "${seed}" via DataForSEO — ${r.suggestions.length} suggestions, ${added.length} added to the universe with real volumes.`,
+    data: {
+      seed,
+      added,
+      suggestions: r.suggestions.slice(0, 10).map(s => ({ term: s.term, volume: s.volume, difficulty: s.difficulty, intent: s.intent })),
+    },
+  }
+}
+
+// Import the REAL queries from Google Search Console (via the connected
+// Porter Metrics account) into the keyword universe.
+async function syncGscKeywordsTool(_args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const r = await syncGscKeywords(ctx.brandId, ctx.brandDomain, 90)
+  if (!r.ok) {
+    await logEvent(ctx, 'GSC_SYNC_BLOCKED', `Search Console keyword sync failed: ${r.message}`)
+    return { ok: false, summary: `Search Console sync unavailable: ${r.message}`, data: { code: r.code } }
+  }
+  await logEvent(ctx, 'GSC_SYNCED', `Imported ${r.added} new + updated ${r.updated} keywords from Search Console`, JSON.stringify(r.topMovers.slice(0, 5)))
+  return {
+    ok: true,
+    summary: `Synced ${r.fetched} real queries from Search Console: ${r.added} new, ${r.updated} updated.`,
+    data: {
+      account: r.accountName,
+      added: r.added,
+      updated: r.updated,
+      topMovers: r.topMovers,
+    },
+  }
 }
 
 async function createContentBrief(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
@@ -381,7 +450,9 @@ async function runSiteAudit(_args: Record<string, unknown>, ctx: ToolContext): P
 export const TOOLS: ToolDef[] = [
   { name: 'get_overview', description: 'KPI snapshot of the active brand: keywords tracked, top-10 count, opportunities, content, backlinks, AI visibility, pending approvals, open tasks, latest weekly report verdict.', args: '{}', execute: getOverview },
   { name: 'list_keywords', description: 'Keyword universe with positions and deltas. Filterable.', args: '{ "intent"?: "COMMERCIAL|INFORMATIONAL", "funnel"?: "TOFU|MOFU|BOFU", "maxPosition"?: number, "limit"?: number }', execute: listKeywords },
-  { name: 'add_keywords', description: 'Add new keyword ideas to the tracking universe (max 20). You should propose the terms yourself based on brand context.', args: '{ "terms": string[] | { term, intent?, funnel?, volume?, difficulty? }[] }', execute: addKeywords },
+  { name: 'add_keywords', description: 'Add new keyword ideas to the tracking universe (max 20) — MANUAL ideas only, no real volumes. Prefer research_keywords when real volumes matter.', args: '{ "terms": string[] | { term, intent?, funnel?, volume?, difficulty? }[] }', execute: addKeywords },
+  { name: 'research_keywords', description: 'REAL keyword research via DataForSEO: returns search volume, keyword difficulty and intent for suggestions around a seed keyword AND adds them to the tracking universe. Requires working DataForSEO credentials — if it fails, tell the owner exactly what the error says and suggest sync_gsc_keywords as the free alternative.', args: '{ "seed": string, "limit"?: number }', execute: researchKeywordsTool },
+  { name: 'sync_gsc_keywords', description: 'Import the REAL search queries from Google Search Console (via the connected Porter Metrics account) into the keyword universe — real positions, impressions and clicks for what the site already ranks for. Free (no DataForSEO needed). Use this before research when the owner wants real data fast.', args: '{}', execute: syncGscKeywordsTool },
   { name: 'list_opportunities', description: 'Decision-engine queue sorted by VALUE score with autonomy level.', args: '{ "status"?: "DISCOVERED|IN_PROGRESS|DONE", "type"?: "CONTENT|OUTREACH|GEO|TECHNICAL|AUTHORITY", "limit"?: number }', execute: listOpportunities },
   { name: 'create_task', description: 'Queue a growth task in the task board (the persistent "give the agent work" queue).', args: '{ "title": string, "description"?: string, "type"?: "KEYWORD_RESEARCH|CONTENT|OUTREACH|AUDIT|GEO|AUTHORITY|GROWTH", "priority"?: "HIGH|MEDIUM|LOW" }', execute: createTask },
   { name: 'list_tasks', description: 'Tasks in the queue with status.', args: '{ "status"?: "QUEUED|RUNNING|DONE|FAILED", "limit"?: number }', execute: listTasks },

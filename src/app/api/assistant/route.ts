@@ -12,6 +12,8 @@ import { db } from '@/lib/db'
 import { ensureSeeded } from '@/lib/ensure-seed'
 import { llmComplete } from '@/lib/assistant/llm'
 import { executeTool, toolSpecPrompt, type ToolContext } from '@/lib/assistant/tools'
+import { checkDataForSeoAuth, getDataForSeoConfig } from '@/lib/dataforseo'
+import { getPorterConfig } from '@/lib/porter-mcp'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -30,7 +32,7 @@ interface ExecutedTool {
 
 const MAX_STEPS = 6
 
-function buildSystemPrompt(ctx: ToolContext, brand: { positioning: string; voice: string; approvedClaims: string; restrictedClaims: string; industry: string }): string {
+function buildSystemPrompt(ctx: ToolContext, brand: { positioning: string; voice: string; approvedClaims: string; restrictedClaims: string; industry: string }, dataSources: string): string {
   return `You are Sprout — the AI growth agent embedded in the Organic Growth OS dashboard.
 You operate the growth machine for the brand "${ctx.brandName}" (${ctx.brandDomain}, industry: ${brand.industry}).
 Positioning: ${brand.positioning || 'n/a'}. Voice: ${brand.voice || 'n/a'}.
@@ -39,6 +41,9 @@ Approved claims: ${brand.approvedClaims || 'n/a'}. Restricted claims: ${brand.re
 YOUR JOB: answer questions AND take action. You are an operator, not a search box — when the user
 asks for growth work, use the tools to read live system state and to queue/execute work
 (tasks, keyword additions, content briefs, audits, approval decisions).
+
+LIVE DATA-SOURCE STATUS (checked moments ago — trust this, do not guess):
+${dataSources}
 
 AVAILABLE TOOLS:
 ${toolSpecPrompt()}
@@ -52,8 +57,14 @@ RULES:
 - For decisions that materially change direction (spending, risky claims, link purchases), tell the user
   what you recommend and note that RED items live in the Owner Approval Queue — never fake an owner decision.
 - Never invent statistics that are not in tool results. If numbers are asked for, call a tool.
-- All dashboard metrics are DEMO DATA (simulated, not real measurements) — say so honestly when the user
-  asks about data authenticity, and mention that connecting the real APIs makes them live.
+- Data authenticity: keywords marked source GSC/DATAFORSEO are REAL (Search Console / DataForSEO); keywords
+  marked DEMO or AGENT are estimates. The Live Stats page shows REAL GSC + GA4 numbers when connected.
+  Other dashboard metrics (backlinks, AI visibility, opportunities) are demo/simulated until their APIs
+  are connected — say so honestly when asked, and point to the exact fix.
+- When the owner asks for new keywords: prefer sync_gsc_keywords (real, free) then research_keywords
+  (real volumes via DataForSEO). Only fall back to add_keywords with your own ideas if neither works,
+  and then say the volumes are unknown. When a data tool fails, quote its error message EXACTLY —
+  it contains the fix (e.g. which credentials page to open).
 - Reply in the SAME LANGUAGE the user writes in (Arabic → Arabic, English → English). Keep UI terms in English.
 - Be concise and structured: short paragraphs, bullet lists, bold key numbers.
 - If the user asks something outside SEO/growth for the brand, briefly steer back to what you can operate.`
@@ -152,8 +163,31 @@ export async function POST(req: NextRequest) {
       brandSlug: brand.slug,
     }
 
+    // ---------- live data-source states (so Sprout never guesses) ----------
+    const [dfsCfg, dfsAuth, porterCfg, kwStats] = await Promise.all([
+      getDataForSeoConfig().catch(() => null),
+      checkDataForSeoAuth().catch(() => null),
+      getPorterConfig().catch(() => null),
+      db.keyword.groupBy({ by: ['source'], _count: { _all: true }, where: { brandId: brand.id } }).catch(() => [] as Array<{ source: string; _count: { _all: number } }>),
+    ])
+    const dfsLine = !dfsCfg
+      ? '• DataForSEO: NOT CONFIGURED — no login/password saved on the API Keys page.'
+      : dfsAuth?.ok
+        ? `• DataForSEO: CONNECTED${typeof dfsAuth.balance === 'number' ? ` (balance $${dfsAuth.balance.toFixed(2)})` : ''} — research_keywords works.`
+        : `• DataForSEO: REJECTED — ${dfsAuth?.message || 'credentials rejected'} Until fixed, research_keywords will fail; use sync_gsc_keywords instead.`
+    const kwLine = (kwStats && Array.isArray(kwStats) && kwStats.length)
+      ? kwStats.map(g => `${g._count._all} ${g.source}`).join(', ')
+      : 'none yet'
+    const dataSources = [
+      dfsLine,
+      porterCfg?.accessToken
+        ? '• Porter Metrics / Google Search Console: CONNECTED — sync_gsc_keywords works and Live Stats shows real GSC + GA4 numbers.'
+        : '• Porter Metrics / Google Search Console: NOT CONNECTED — the owner must open the Live Stats page and press Connect Porter.',
+      `• Keyword universe for this brand: ${kwLine} (GSC/DATAFORSEO = real, DEMO/AGENT = estimates).`,
+    ].join('\n')
+
     // ---------- agent loop (first call doubles as provider probe) ----------
-    const system = buildSystemPrompt(ctx, brand)
+    const system = buildSystemPrompt(ctx, brand, dataSources)
     const history = incoming
       .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
       .slice(-12)

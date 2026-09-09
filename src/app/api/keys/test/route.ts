@@ -11,6 +11,7 @@ import { ensureSeeded } from '@/lib/ensure-seed'
 import { findCredentialService } from '@/lib/credential-services'
 import { getCredentialValues, getSettingsPin } from '@/lib/credentials'
 import { testPorterConnection } from '@/lib/porter-mcp'
+import { checkDataForSeoAuth } from '@/lib/dataforseo'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,27 +58,19 @@ async function testOpenai(values: Record<string, string>): Promise<TestOutcome> 
   return { ok: null, message: `OpenAI responded with HTTP ${res.status} — key not confirmed.` }
 }
 
-async function testDataForSeo(values: Record<string, string>): Promise<TestOutcome> {
-  const { login, password } = values
-  if (!login || !password) return { ok: null, message: 'Login and password are both required.' }
-  const auth = Buffer.from(`${login}:${password}`).toString('base64')
-  const res = await fetchWithTimeout('https://api.dataforseo.com/v3/appendix/user_data', {
-    method: 'POST',
-    headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
-    body: JSON.stringify({}),
-  })
-  if (!res) return { ok: null, message: 'Could not reach api.dataforseo.com (network/timeout).' }
-  if (res.status === 401 || res.status === 403) return { ok: false, message: 'Rejected — login or password is incorrect.' }
-  try {
-    const data = await res.json()
-    if (res.ok && (data.status_code === 20000 || data.status_code === 20001)) {
-      const money = data.tasks?.[0]?.result?.[0]?.money?.balance
-      return { ok: true, message: `Connected${typeof money === 'number' ? ` — account balance: $${money.toFixed(2)}` : ''}.` }
+async function testDataForSeo(_values: Record<string, string>): Promise<TestOutcome> {
+  // GET /v3/appendix/user_data is the authoritative check: 40100 on wrong
+  // API login/password, account balance on success. (The old POST test
+  // returned a misleading 40502 "POST Data Is Empty".)
+  const check = await checkDataForSeoAuth(true)
+  if (check.ok) return { ok: true, message: check.message }
+  if (check.statusCode === 40100) {
+    return {
+      ok: false,
+      message: 'Rejected — the API login/password is incorrect. DataForSEO API credentials are NOT your dashboard email+password: open app.dataforseo.com → API Access, copy the API login + password generated there, and update them on this page.',
     }
-    return { ok: false, message: `DataForSEO returned status_code ${data.status_code ?? 'unknown'} — check the account.` }
-  } catch {
-    return { ok: null, message: `DataForSEO responded with HTTP ${res.status} — not confirmed.` }
   }
+  return { ok: false, message: check.message }
 }
 
 async function testHunter(values: Record<string, string>): Promise<TestOutcome> {

@@ -27,7 +27,16 @@ export async function ensureSeeded(): Promise<void> {
       }
     }
 
-    // 2. Seed demo data if empty
+    // 2. Lightweight migrations for databases created by older DDL versions.
+    //    v1.6: Keyword.source (DEMO | GSC | DATAFORSEO | AGENT)
+    try {
+      await db.$executeRawUnsafe(`ALTER TABLE "Keyword" ADD COLUMN "source" TEXT NOT NULL DEFAULT 'DEMO'`)
+      console.log('[ensure-seed] added Keyword.source column (v1.6 migration)')
+    } catch {
+      // column already exists — expected on fresh databases
+    }
+
+    // 3. Seed demo data if empty
     try {
       const count = await db.brand.count()
       if (count === 0) {

@@ -40,10 +40,21 @@ export async function getCredentialValues(serviceId: string): Promise<Record<str
     const row = await db.credential.findUnique({ where: { service: serviceId } })
     if (row && row.valuesEnc) values = decryptJson(row.valuesEnc)
   } catch (e) {
-    // table may not exist yet (before ensureSeeded) — fall back to the durable env store
-    const svc = findCredentialService(serviceId)
-    if (svc) values = { ...values, ...(await durableFieldValues(svc)) }
     console.error('[credentials] read failed:', serviceId, e instanceof Error ? e.message : e)
+  }
+  // Live env fallback: when the vault row is missing (e.g. a warm serverless
+  // instance that started BEFORE the credential was saved), resolve the value
+  // straight from the durable env store so new credentials work immediately
+  // on every instance — not just after the next cold start.
+  if (Object.keys(values).length === 0) {
+    const svc = findCredentialService(serviceId)
+    if (svc) {
+      try {
+        values = { ...values, ...(await durableFieldValues(svc)) }
+      } catch {
+        // env store unavailable — return what we have
+      }
+    }
   }
   valueCache.set(serviceId, { values, ts: Date.now() })
   return values
@@ -118,7 +129,19 @@ export async function buildServiceStates(): Promise<CredentialServiceState[]> {
 
   return CREDENTIAL_SERVICES.map((svc) => {
     const row = byService.get(svc.id)
-    const values = row && row.valuesEnc ? decryptJson(row.valuesEnc) : {}
+    let values = row && row.valuesEnc ? decryptJson(row.valuesEnc) : {}
+    let source = row ? row.source : null
+    // No vault row on THIS instance (warm instance that started before the
+    // credential was saved, or a row written by another instance's DB) →
+    // resolve live from the durable env store so the dashboard always shows
+    // the true state. DB values always win when present.
+    if (Object.keys(values).length === 0) {
+      for (const f of svc.fields) {
+        const ev = f.envVars.find((v) => envSnapshot[v] && envSnapshot[v]!.trim())
+        if (ev) values[f.id] = envSnapshot[ev]!.trim()
+      }
+      if (Object.keys(values).length > 0) source = 'ENV'
+    }
     const effective = { ...values } // stored values win
     const fields: CredentialFieldState[] = svc.fields.map((f) => {
       const val = effective[f.id] || ''
@@ -133,7 +156,7 @@ export async function buildServiceStates(): Promise<CredentialServiceState[]> {
     return {
       service: svc.id,
       configured: fields.some((f) => f.set),
-      source: row ? row.source : null,
+      source,
       updatedAt: row ? row.updatedAt.toISOString() : null,
       fields,
     }

@@ -93,6 +93,7 @@ model Keyword {
   geoValue         Int      @default(0) // AI-search value 0-100
   cannibalRisk     Boolean  @default(false)
   status           String   @default("TRACKING") // TRACKING | TARGETED | WON | LOST | PARKED
+  source           String   @default("DEMO") // DEMO | GSC | DATAFORSEO | AGENT — where this keyword came from
   updatedAt        DateTime @updatedAt
   createdAt        DateTime @default(now())
 

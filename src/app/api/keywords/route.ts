@@ -30,6 +30,8 @@ export async function GET(req: NextRequest) {
         positions1120: keywords.filter((k) => k.currentPosition >= 11 && k.currentPosition <= 20).length,
         notRanking: keywords.filter((k) => k.currentPosition === 0).length,
         totalVolume: keywords.reduce((s, k) => s + k.monthlyVolume, 0),
+        live: keywords.filter((k) => k.source === 'GSC' || k.source === 'DATAFORSEO').length,
+        demo: keywords.filter((k) => k.source !== 'GSC' && k.source !== 'DATAFORSEO').length,
       },
     })
   } catch (e) {
