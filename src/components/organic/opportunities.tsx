@@ -6,7 +6,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Progress } from '@/components/ui/progress'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
@@ -114,18 +113,22 @@ export function OpportunitiesView({ brandSlug }: { brandSlug: string }) {
       </div>
 
       {/* Queue table */}
+      <p className="-mt-1 text-[11px] text-muted-foreground sm:hidden">
+        Swipe the table sideways to see scores & details →
+      </p>
+
       <Card>
-        <ScrollArea className="max-h-[640px]">
-          <Table>
+        <div className="max-h-[640px] overflow-auto">
+          <Table className="min-w-[640px] table-fixed">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="min-w-[280px]">Opportunity</TableHead>
-                <TableHead>Score</TableHead>
-                <TableHead className="hidden md:table-cell">Autonomy</TableHead>
-                <TableHead className="hidden lg:table-cell">Status</TableHead>
-                <TableHead className="hidden lg:table-cell">Effort</TableHead>
-                <TableHead className="hidden sm:table-cell">Created</TableHead>
-                <TableHead className="w-8" />
+                <TableHead className="w-[44%]">Opportunity</TableHead>
+                <TableHead className="w-[16%]">Score</TableHead>
+                <TableHead className="hidden md:table-cell w-[13%]">Autonomy</TableHead>
+                <TableHead className="hidden lg:table-cell w-[11%]">Status</TableHead>
+                <TableHead className="hidden lg:table-cell w-[9%]">Effort</TableHead>
+                <TableHead className="hidden sm:table-cell w-[11%]">Created</TableHead>
+                <TableHead className="w-[4%]" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -153,11 +156,11 @@ export function OpportunitiesView({ brandSlug }: { brandSlug: string }) {
                 >
                   <TableCell>
                     <div className="flex flex-col gap-1.5">
-                      <span className="text-sm font-medium leading-snug">{o.title}</span>
-                      <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-medium leading-snug break-words whitespace-normal">{o.title}</span>
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <TypeBadge type={o.type} />
                         {o.keyword ? (
-                          <Badge variant="outline" className="text-[10px] text-muted-foreground">“{o.keyword}”</Badge>
+                          <Badge variant="outline" className="max-w-[220px] truncate text-[10px] text-muted-foreground" title={o.keyword}>“{o.keyword}”</Badge>
                         ) : null}
                       </div>
                     </div>
@@ -184,7 +187,7 @@ export function OpportunitiesView({ brandSlug }: { brandSlug: string }) {
               )}
             </TableBody>
           </Table>
-        </ScrollArea>
+        </div>
       </Card>
 
       {/* Detail dialog */}

@@ -5,7 +5,6 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
@@ -303,18 +302,22 @@ export function KeywordsView({ brandSlug }: { brandSlug: string }) {
         <span className="text-xs text-muted-foreground">{filtered.length} shown</span>
       </div>
 
+      <p className="-mt-1 text-[11px] text-muted-foreground sm:hidden">
+        Swipe the table sideways to see positions & metrics →
+      </p>
+
       <Card>
-        <ScrollArea className="max-h-[600px]">
-          <Table>
+        <div className="max-h-[600px] overflow-auto">
+          <Table className="min-w-[520px] table-fixed">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="min-w-[220px]">Keyword</TableHead>
-                <TableHead>Position</TableHead>
-                <TableHead className="hidden sm:table-cell">Volume</TableHead>
-                <TableHead className="hidden md:table-cell">Difficulty</TableHead>
-                <TableHead className="hidden lg:table-cell">Intent</TableHead>
-                <TableHead className="hidden lg:table-cell">AEO</TableHead>
-                <TableHead className="hidden lg:table-cell">GEO</TableHead>
+                <TableHead className="w-[38%] max-w-[330px]">Keyword</TableHead>
+                <TableHead className="w-[13%]">Position</TableHead>
+                <TableHead className="hidden sm:table-cell w-[13%]">Volume</TableHead>
+                <TableHead className="hidden md:table-cell w-[13%]">Difficulty</TableHead>
+                <TableHead className="hidden lg:table-cell w-[11%]">Intent</TableHead>
+                <TableHead className="hidden lg:table-cell w-[6%]">AEO</TableHead>
+                <TableHead className="hidden lg:table-cell w-[6%]">GEO</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -338,8 +341,8 @@ export function KeywordsView({ brandSlug }: { brandSlug: string }) {
                 <TableRow key={k.id}>
                   <TableCell>
                     <div className="flex flex-col gap-1">
-                      <span className="text-sm font-medium">{k.term}</span>
-                      <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-medium leading-snug break-words whitespace-normal">{k.term}</span>
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <SourceBadge source={k.source} />
                         {k.funnelStage ? <Badge variant="outline" className="text-[10px] text-muted-foreground">{k.funnelStage}</Badge> : null}
                       </div>
@@ -371,7 +374,7 @@ export function KeywordsView({ brandSlug }: { brandSlug: string }) {
               )}
             </TableBody>
           </Table>
-        </ScrollArea>
+        </div>
       </Card>
     </div>
   )
