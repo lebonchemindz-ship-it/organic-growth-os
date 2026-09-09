@@ -299,13 +299,15 @@ async function bulkCall(
   cfg: DataForSeoConfig,
   terms: string[],
   locationName: string,
-  languageName: string,
+  languageName: string | null,
   debug = false,
 ): Promise<{ items: Record<string, unknown>[]; cost: number; statusCode: number | null; message: string | null; sample: unknown }> {
+  const payload: Record<string, unknown> = { location_name: locationName, keywords: terms }
+  if (languageName) payload.language_name = languageName
   const res = await fetchWithTimeout(`${API}${path}`, {
     method: 'POST',
     headers: { authorization: authHeader(cfg), 'content-type': 'application/json' },
-    body: JSON.stringify([{ location_name: locationName, language_name: languageName, keywords: terms }]),
+    body: JSON.stringify([payload]),
   }, 60_000)
   if (!res) return { items: [], cost: 0, statusCode: null, message: `Could not reach ${path} (network/timeout).`, sample: null }
   try {
@@ -330,9 +332,9 @@ async function bulkCall(
 }
 
 /**
- * Real metrics for exact keywords via two Labs bulk endpoints:
- *   • /google/bulk_search_volume/live         → search volume
- *   • /google/bulk_keyword_difficulty/live    → difficulty
+ * Real metrics for exact keywords via two bulk endpoints:
+ *   • keywords_data/clickstream_data/bulk_search_volume/live → volume
+ *   • dataforseo_labs/google/bulk_keyword_difficulty/live    → difficulty
  * Pass ONLY the terms you are missing each metric for — every
  * term is billed, already-enriched keywords are never re-charged.
  * Failures of one endpoint never block the other; every outcome
@@ -369,10 +371,12 @@ export async function fetchBulkKeywordMetrics(
   const languageName = (opts.languageName || 'English').trim()
 
   if (volumeTerms.length > 0) {
-    const volume = await bulkCall('/v3/dataforseo_labs/google/bulk_search_volume/live', cfg, volumeTerms, locationName, languageName, debug)
+    // Clickstream Bulk Search Volume — the real per-keyword volume
+    // source (keywords_data/clickstream_data); language-agnostic.
+    const volume = await bulkCall('/v3/keywords_data/clickstream_data/bulk_search_volume/live', cfg, volumeTerms, locationName, null, debug)
     cost += volume.cost
     if (volume.message) messages.push(volume.message)
-    if (debug && volume.sample !== null) samples.push({ endpoint: 'labs_volume', result: volume.sample })
+    if (debug && volume.sample !== null) samples.push({ endpoint: 'clickstream_volume', result: volume.sample })
     for (const item of volume.items) {
       const kw = typeof item.keyword === 'string' ? item.keyword.toLowerCase() : ''
       if (!kw) continue
