@@ -178,7 +178,7 @@ export default function Home() {
           </span>
           <div>
             <p className="text-sm font-bold leading-tight text-sidebar-foreground">Organic Growth OS</p>
-            <p className="text-[10px] text-sidebar-foreground/50">v1.4 · autonomous growth machine</p>
+            <p className="text-[10px] text-sidebar-foreground/50">v1.5 · autonomous growth machine</p>
           </div>
         </div>
 

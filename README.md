@@ -63,7 +63,22 @@ You no longer need the Vercel dashboard or a terminal to connect services. Open 
 - **Test connection** — one click verifies Anthropic, OpenAI, DataForSEO (shows balance), Hunter, Supabase and Shopify keys against the live services.
 - **PIN protection** — set `SETTINGS_PIN` and the dashboard asks for it before saving/removing keys.
 
-Routes: `GET /api/keys` (masked states) · `POST /api/keys` (save + env backup) · `DELETE /api/keys?service=` · `POST /api/keys/test` (live connection tests) · `POST /api/keys/verify` (PIN check + backup restore).
+Routes: `GET /api/keys` (masked states) · `POST /api/keys` (save + env backup) · `DELETE /api/keys?service=` · `POST /api/keys/test` (live connection tests, incl. Porter) · `POST /api/keys/verify` (PIN check + backup restore).
+
+---
+
+## 📊 Live Stats — real GSC + GA4 statistics (two sources, both kept)
+
+**Operate → Live Stats** shows real Google Search Console and Google Analytics 4 numbers — clicks, impressions, CTR, weighted average position, sessions, users, daily charts, top queries and top pages — with a 7/28/90-day range selector. Two data sources live side by side (the first is never removed):
+
+- **Option 1 — Direct Google service account** (the original): one JSON key for GSC + GA4, managed on the API Keys page under “Google (Search Console + GA4) — Option 1”.
+- **Option 2 — Porter Metrics** (new): connect both Google products through [Porter Metrics](https://portermetrics.com) with a simple browser login — **no service-account JSON, no DNS TXT steps**. OAuth 2.0 (PKCE) is handled by the app; tokens live in the encrypted vault + durable env backup, and refresh automatically.
+
+Connecting via Porter is three clicks: **Connect Porter** (log into your Porter account) → **Connect Search Console** (pick the Google account that owns the property) → **Connect GA4** (same). Statistics load as soon as an account appears.
+
+Routes: `GET /api/porter/auth/start` (begin OAuth) · `GET /api/porter/auth/callback` (finish OAuth, CSRF-protected) · `GET /api/porter/status` (connection + accounts) · `POST /api/porter/connect-account` (PIN-protected, Google-only) · `GET /api/porter/stats?days=28` (live statistics, 5-min warm cache, `&refresh=1` to force) · `DELETE /api/porter/disconnect` (PIN-protected).
+
+Stats queries adapt to the live connector schema: field names are discovered per-connector via `list_fields`, the `query_data` parameter shape falls back across four variants, and both flat and GA4-style (header/rows) responses are normalized. Errors from Porter surface verbatim in the UI with their hint.
 
 ---
 
@@ -111,7 +126,11 @@ bun run scripts/seed.ts
 | `POST /api/assistant` | **Sprout agent** — chat + tool execution loop |
 | `GET /api/tasks?brand=` · `PATCH /api/tasks` | **Task board** — the agent's persistent task queue |
 | `GET /api/keys` · `POST` / `DELETE` | **Credential vault** — masked states, save (encrypted + env sync), remove |
-| `POST /api/keys/test` · `POST /api/keys/redeploy` | Verify a saved key live · apply env backup |
+| `POST /api/keys/test` · `POST /api/keys/verify` | Verify a saved key live · PIN check + backup restore |
+| `GET /api/porter/auth/start` · `GET /api/porter/auth/callback` | **Porter Metrics OAuth** — begin/finish the browser login (PKCE + CSRF cookies) |
+| `GET /api/porter/status` · `POST /api/porter/connect-account` | Porter connection state, GSC/GA4 accounts · link a Google account (PIN, Google-only) |
+| `GET /api/porter/stats?days=28` | **Live statistics** — GSC + GA4 metrics, daily series, top queries/pages |
+| `DELETE /api/porter/disconnect` | Remove the Porter tokens + backups (Option 1 untouched) |
 | `GET /api/health` | Liveness + database check |
 
 ---
@@ -125,6 +144,8 @@ See the **"APIs Required"** tab inside the app for the full breakdown (auth, pri
 **Week one:** Hunter.io (outreach) · Merchant Center (product search) · Bing Webmaster + IndexNow
 
 **When content scales:** Recraft API (editorial imagery)
+
+**Easier alternative for GSC + GA4:** Porter Metrics (free account) — the Live Stats page connects both Google products with a browser login, no service-account JSON.
 
 **Total ≈ $85–225/mo — replaces $250–500/mo of overlapping SEO tools.**
 
@@ -145,6 +166,10 @@ SHOPIFY_ACCESS_TOKEN=
 MERCHANT_ID=
 BING_API_KEY=
 INDEXNOW_KEY=
+# Porter Metrics (Option 2 for live stats — filled automatically by the OAuth flow)
+PORTER_MCP_URL=https://mcp.portermetrics.com/mcp
+PORTER_ACCESS_TOKEN=
+PORTER_REFRESH_TOKEN=
 ```
 
 ---
@@ -160,7 +185,7 @@ Never: fabricate reviews · impersonate customers · manufacture Reddit conversa
 ```
 prisma/schema.prisma          # Full OS data model (13 tables, brand_id isolation)
 scripts/seed.ts               # Deterministic demo data
-src/app/page.tsx              # Single-page dashboard shell (12 sections + agent)
+src/app/page.tsx              # Single-page dashboard shell (13 sections + agent)
 src/app/api/*                 # 14 REST endpoints (incl. assistant + tasks)
 src/components/organic/*      # Section components + assistant-panel.tsx
 src/lib/assistant/llm.ts      # LLM provider chain (Anthropic → OpenAI → sandbox)
