@@ -252,13 +252,12 @@ export default function Home() {
               <div className="mb-5 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-700 dark:text-amber-300">
                 <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" />
                 <div className="min-w-0 flex-1 text-[13px] leading-relaxed">
-                  <p className="font-semibold">This dashboard runs on simulated demo data.</p>
+                  <p className="font-semibold">Mixed data: real where connected, simulated elsewhere.</p>
                   <p className="mt-0.5 text-amber-700/80 dark:text-amber-300/80">
-                    Every metric you see for Holy Strips and the other brands (keyword volumes and positions, traffic
-                    estimates, AI visibility scores, backlinks, outreach and reports) is realistic placeholder data seeded
-                    to demonstrate the system. It is <b>not</b> real data from holystrips.com. Connect the real APIs
-                    (DataForSEO, Google Search Console, GA4, Shopify…) listed under “APIs Required” to replace it with
-                    live numbers.
+                    <b>Real right now:</b> the Keywords tab (marked “Search Console” — actual Google positions and impressions
+                    for holystrips.com) and the Live Stats tab (GSC + GA4 via Porter Metrics). <b>Still simulated:</b> the
+                    overview estimates, AI visibility, backlinks, outreach and reports. Fix DataForSEO credentials on the API
+                    Keys page to unlock real search volumes in keyword research.
                   </p>
                 </div>
                 <button
