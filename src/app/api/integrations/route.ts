@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { ensureSeeded } from '@/lib/ensure-seed'
 import { checkDataForSeoAuth, getDataForSeoConfig } from '@/lib/dataforseo'
 import { getCredentialValues } from '@/lib/credentials'
+import { hunterAccountCheck } from '@/lib/hunter'
 import { findGoogleConnectorSlugs, getPorterConfig, listPorterAccounts, normalizeAccounts, testPorterConnection } from '@/lib/porter-mcp'
 
 export const dynamic = 'force-dynamic'
@@ -32,11 +33,24 @@ async function reconcileRealStatuses() {
     }
   }
 
-  const [anthropic, dfsCfg] = await Promise.all([
+  const [anthropic, dfsCfg, hunter, recraft, activepieces, shopify, bing, merchant] = await Promise.all([
     getCredentialValues('anthropic').catch(() => ({ apiKey: '' })),
     getDataForSeoConfig().catch(() => null),
+    getCredentialValues('hunter').catch(() => ({} as Record<string, string>)),
+    getCredentialValues('recraft').catch(() => ({} as Record<string, string>)),
+    getCredentialValues('activepieces').catch(() => ({} as Record<string, string>)),
+    getCredentialValues('shopify').catch(() => ({} as Record<string, string>)),
+    getCredentialValues('bing').catch(() => ({} as Record<string, string>)),
+    getCredentialValues('merchant').catch(() => ({} as Record<string, string>)),
   ])
   const dfsAuth = dfsCfg ? await checkDataForSeoAuth().catch(() => ({ ok: false })) : { ok: false }
+
+  // Hunter: live account check as evidence — the /v2/account endpoint is
+  // FREE (consumes none of the 25 monthly searches / 50 verifications).
+  // Falls back to plain key presence when Hunter is unreachable.
+  const hunterAccount = hunter.apiKey
+    ? await hunterAccountCheck().catch(() => null)
+    : null
 
   return {
     porterOk,
@@ -44,6 +58,13 @@ async function reconcileRealStatuses() {
     ga4Accounts,
     anthropicKey: Boolean(anthropic.apiKey),
     dataforseoVerified: Boolean(dfsAuth.ok),
+    hunter: { key: Boolean(hunter.apiKey), account: hunterAccount },
+    recraftKey: Boolean(recraft.apiKey),
+    activepieces: Boolean(activepieces.webhookUrl || activepieces.apiKey),
+    shopify: Boolean(shopify.domain && shopify.accessToken),
+    bingKey: Boolean(bing.bingApiKey),
+    indexnowKey: Boolean(bing.indexnowKey),
+    merchant: Boolean(merchant.merchantId || merchant.apiKey),
   }
 }
 
@@ -57,9 +78,11 @@ export async function GET() {
     const integrations = await db.integration.findMany({ orderBy: { order: 'asc' } })
     const real = await reconcileRealStatuses()
 
-    // Map each catalog row to its TRUE connection state. Rows we cannot
-    // verify programmatically stay "PENDING" — never marked connected
-    // without evidence.
+    // Map each catalog row to its TRUE connection state, reconciled from
+    // the credential vault / live checks. Rows we cannot verify
+    // programmatically stay "PENDING" — never marked connected
+    // without evidence (key saved counts as evidence for untestable
+    // services, matching the Anthropic row's existing standard).
     const isGscRow = (name: string) => name.includes('Search Console')
     const isGa4Row = (name: string) => /^GA4/.test(name)
     const reconciled = integrations.map((i) => {
@@ -77,6 +100,31 @@ export async function GET() {
       } else if (i.name === 'DataForSEO MCP') {
         status = real.dataforseoVerified ? 'CONNECTED' : 'PENDING'
         note = real.dataforseoVerified ? 'API credentials verified' : 'API login/password required (app.dataforseo.com → API Access)'
+      } else if (i.name === 'Hunter') {
+        status = real.hunter.key ? 'CONNECTED' : 'PENDING'
+        note = real.hunter.account
+          ? `Account ${real.hunter.account} verified — key saved in the vault`
+          : real.hunter.key
+            ? 'API key saved in the vault'
+            : 'Add the API key on the API Keys page (hunter.io/api-keys)'
+      } else if (i.name === 'Recraft API') {
+        status = real.recraftKey ? 'CONNECTED' : 'PENDING'
+        note = real.recraftKey ? 'API key saved in the vault' : 'Add the API key on the API Keys page (recraft.ai/developers)'
+      } else if (i.name === 'Activepieces') {
+        status = real.activepieces ? 'CONNECTED' : 'PENDING'
+        note = real.activepieces ? 'Webhook + API key saved in the vault' : 'Add the webhook URL / API key on the API Keys page'
+      } else if (i.name === 'Shopify (CMS)') {
+        status = real.shopify ? 'CONNECTED' : 'PENDING'
+        note = real.shopify ? 'Store domain + access token saved in the vault' : 'Add store domain + admin access token on the API Keys page'
+      } else if (i.name === 'Bing Webmaster Tools') {
+        status = real.bingKey ? 'CONNECTED' : 'PENDING'
+        note = real.bingKey ? 'API key saved in the vault' : 'Add the Bing API key on the API Keys page'
+      } else if (i.name === 'IndexNow') {
+        status = real.indexnowKey ? 'CONNECTED' : 'PENDING'
+        note = real.indexnowKey ? 'IndexNow key saved in the vault' : 'Add the IndexNow key on the API Keys page'
+      } else if (i.name === 'Google Merchant Center') {
+        status = real.merchant ? 'CONNECTED' : 'PENDING'
+        note = real.merchant ? 'Merchant ID / API key saved in the vault' : 'Add the Merchant ID + API key on the API Keys page'
       } else if (i.name.includes('SQLite')) {
         status = 'CONNECTED'
         note = 'Running on the persistent volume'

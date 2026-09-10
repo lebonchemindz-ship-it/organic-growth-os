@@ -126,6 +126,25 @@ export async function hunterVerifyEmail(email: string): Promise<VerifierResult |
 }
 
 /**
+ * Account check — FREE endpoint: consumes none of the 25 monthly
+ * searches / 50 verifications. Used by /api/integrations to reconcile
+ * the real connection state (returns the account email as evidence).
+ */
+export async function hunterAccountCheck(): Promise<string | null> {
+  const key = await getHunterApiKey()
+  if (!key) return null
+  const res = await fetchWithTimeout(`${API}/account?api_key=${encodeURIComponent(key)}`)
+  if (!res || !res.ok) return null
+  try {
+    const json = await res.json() as { data?: Record<string, unknown> }
+    const email = json.data?.email
+    return typeof email === 'string' && email ? email : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Pick the best outreach email from a domain-search result:
  * a person in a content/editor/marketing role beats a generic
  * inbox, and confidence breaks ties.
