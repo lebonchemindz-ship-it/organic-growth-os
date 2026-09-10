@@ -12,6 +12,7 @@ import { findCredentialService } from '@/lib/credential-services'
 import { getCredentialValues, getSettingsPin } from '@/lib/credentials'
 import { testPorterConnection } from '@/lib/porter-mcp'
 import { checkDataForSeoAuth } from '@/lib/dataforseo'
+import { verifySmtp } from '@/lib/email-sender'
 
 export const dynamic = 'force-dynamic'
 
@@ -90,6 +91,15 @@ async function testHunter(values: Record<string, string>): Promise<TestOutcome> 
   }
 }
 
+async function testSmtp(values: Record<string, string>): Promise<TestOutcome> {
+  if (!values.host || !values.username || !values.password) {
+    return { ok: null, message: 'Host, username and password are all required.' }
+  }
+  const r = await verifySmtp()
+  if (r.ok) return { ok: true, message: 'Connected — the SMTP server accepted the credentials. Outreach emails can be sent automatically.' }
+  return { ok: false, message: `Rejected — ${r.error ?? 'the SMTP server refused the credentials (check host/port/password).'}` }
+}
+
 async function testSupabase(values: Record<string, string>): Promise<TestOutcome> {
   const { url, serviceKey } = values
   if (!url || !serviceKey) return { ok: null, message: 'Project URL and service key are both required.' }
@@ -138,6 +148,7 @@ const TESTERS: Record<string, (v: Record<string, string>) => Promise<TestOutcome
   openai: testOpenai,
   dataforseo: testDataForSeo,
   hunter: testHunter,
+  smtp: testSmtp,
   supabase: testSupabase,
   shopify: testShopify,
   porter: testPorter,

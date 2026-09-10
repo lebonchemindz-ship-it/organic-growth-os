@@ -17,7 +17,7 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   KeyRound, Brain, LineChart, Database, Calendar, Mail, Palette, ShoppingBag,
   Globe, Zap, CheckCircle2, XCircle, Loader2, Eye, EyeOff, ExternalLink,
-  ShieldCheck, RefreshCw, Trash2, Lock, Unlock, Sparkles, HardDriveDownload, Cable,
+  ShieldCheck, RefreshCw, Trash2, Lock, Unlock, Sparkles, HardDriveDownload, Cable, Send,
 } from 'lucide-react'
 import { SectionHeader } from './shared'
 import {
@@ -51,6 +51,7 @@ const SERVICE_ICONS: Record<string, React.ReactNode> = {
   supabase: <Database className="h-5 w-5" />,
   activepieces: <Calendar className="h-5 w-5" />,
   hunter: <Mail className="h-5 w-5" />,
+  smtp: <Send className="h-5 w-5" />,
   recraft: <Palette className="h-5 w-5" />,
   shopify: <ShoppingBag className="h-5 w-5" />,
   google: <Globe className="h-5 w-5" />,

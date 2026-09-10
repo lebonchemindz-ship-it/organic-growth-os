@@ -11,6 +11,7 @@ import { db } from '@/lib/db'
 import { researchKeywords } from '@/lib/dataforseo'
 import { syncGscKeywords } from '@/lib/gsc-keywords'
 import { fetchLiveStats } from '@/lib/porter-stats'
+import { discoverPublishers, launchOutreach, sendDueFollowups } from '@/lib/outreach-engine'
 
 export interface ToolContext {
   brandId: string
@@ -711,6 +712,43 @@ async function runSiteAudit(_args: Record<string, unknown>, ctx: ToolContext): P
   }
 }
 
+// ---------- outreach engine (Hunter + SMTP) ----------
+
+async function discoverPublishersTool(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const seed = typeof args.seed === 'string' ? args.seed : ''
+  const domains = Array.isArray(args.domains)
+    ? args.domains.filter((d): d is string => typeof d === 'string')
+    : []
+  const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 25)
+  const autoLaunch = args.autoLaunch !== false
+  const result = await discoverPublishers(ctx.brandId, ctx.brandDomain, {
+    seed, domains, limit, autoLaunch, brandName: ctx.brandName,
+  })
+  await logEvent(ctx, 'OUTREACH', 'Agent discovered publishers via Hunter', result.message)
+  return {
+    ok: result.ok,
+    summary: result.message,
+    data: {
+      added: result.added,
+      qualified: result.qualified,
+      skipped: result.skipped,
+      hunterSearchesUsed: result.hunterSearchesUsed,
+      publishers: result.publishers,
+      autoLaunch: result.autoLaunch,
+    },
+  }
+}
+
+async function launchOutreachTool(_args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const result = await launchOutreach(ctx.brandId, ctx.brandName, ctx.brandDomain, {})
+  return { ok: result.ok, summary: result.message, data: result }
+}
+
+async function sendFollowupsTool(_args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const result = await sendDueFollowups(ctx.brandId, ctx.brandName, ctx.brandDomain)
+  return { ok: result.ok, summary: result.message, data: result }
+}
+
 // ---------- registry ----------
 
 export const TOOLS: ToolDef[] = [
@@ -719,6 +757,9 @@ export const TOOLS: ToolDef[] = [
   { name: 'add_keywords', description: 'Add new keyword ideas to the tracking universe (max 20) — MANUAL ideas only, stored WITHOUT volume/difficulty (those stay unknown until real DataForSEO research). Prefer research_keywords when real numbers matter.', args: '{ "terms": string[] | { term, intent?, funnel? }[] }', execute: addKeywords },
   { name: 'research_keywords', description: 'REAL keyword research via DataForSEO: returns search volume, keyword difficulty and intent for suggestions around a seed keyword AND adds them to the tracking universe. Requires working DataForSEO credentials — if it fails, tell the owner exactly what the error says and suggest sync_gsc_keywords as the free alternative.', args: '{ "seed": string, "limit"?: number }', execute: researchKeywordsTool },
   { name: 'sync_gsc_keywords', description: 'Import the REAL search queries from Google Search Console (via the connected Porter Metrics account) into the keyword universe — real positions, impressions and clicks for what the site already ranks for. Free (no DataForSEO needed). Use this before research when the owner wants real data fast.', args: '{}', execute: syncGscKeywordsTool },
+  { name: 'discover_publishers', description: 'REAL publisher discovery: live SERP lookup (DataForSEO) for a niche keyword or a pasted domain list, then Hunter.io finds + verifies each contact email, scores every publisher (min 70 to qualify) and — when SMTP is configured — sends the Day-1 outreach email automatically. Requires the Hunter.io key (API Keys page).', args: '{ "seed"?: string, "domains"?: string[], "limit"?: number, "autoLaunch"?: boolean (default true) }', execute: discoverPublishersTool },
+  { name: 'launch_outreach', description: 'Send the Day-1 outreach email to every qualified publisher that has no active sequence yet (personalized via the LLM brain, sent via SMTP, capped at 30 new contacts/day). Requires the Email Sender (SMTP) connection.', args: '{}', execute: launchOutreachTool },
+  { name: 'send_followups', description: 'Send every DUE Day-5 / Day-12 follow-up right now (the dashboard also does this automatically on open). Requires the Email Sender (SMTP) connection.', args: '{}', execute: sendFollowupsTool },
   { name: 'list_opportunities', description: 'Decision-engine queue sorted by VALUE score with autonomy level.', args: '{ "status"?: "DISCOVERED|IN_PROGRESS|DONE", "type"?: "CONTENT|OUTREACH|GEO|TECHNICAL|AUTHORITY", "limit"?: number }', execute: listOpportunities },
   { name: 'create_task', description: 'Queue a growth task in the task board (the persistent "give the agent work" queue).', args: '{ "title": string, "description"?: string, "type"?: "KEYWORD_RESEARCH|CONTENT|OUTREACH|AUDIT|GEO|AUTHORITY|GROWTH", "priority"?: "HIGH|MEDIUM|LOW" }', execute: createTask },
   { name: 'list_tasks', description: 'Tasks in the queue with status.', args: '{ "status"?: "QUEUED|RUNNING|DONE|FAILED", "limit"?: number }', execute: listTasks },

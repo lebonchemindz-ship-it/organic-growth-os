@@ -233,6 +233,97 @@ export async function fetchBacklinksSummary(domain: string, force = false): Prom
 }
 
 // ------------------------------------------------------------
+// SERP DOMAIN DISCOVERY — top organic result domains for a seed
+// keyword. One live-regular SERP call (fractions of a cent),
+// used by the publisher discovery engine to find candidate
+// publisher domains in the brand's niche.
+// ------------------------------------------------------------
+
+export interface SerpDomain {
+  domain: string
+  /** best (lowest) absolute rank of the domain in the SERP */
+  bestPosition: number
+  /** how many top results the domain holds */
+  results: number
+}
+
+export interface SerpDomainsOutcome {
+  ok: boolean
+  domains: SerpDomain[]
+  message: string
+}
+
+export async function fetchSerpDomains(seed: string, opts: { depth?: number; locationName?: string } = {}): Promise<SerpDomainsOutcome> {
+  const cfg = await getDataForSeoConfig()
+  if (!cfg) {
+    return { ok: false, domains: [], message: 'No DataForSEO credentials saved yet — add the API login + password on the API Keys page, or paste publisher domains manually.' }
+  }
+  const auth = await checkDataForSeoAuth()
+  if (!auth.ok) {
+    return { ok: false, domains: [], message: auth.message }
+  }
+  if (auth.balance !== null && auth.balance <= 0) {
+    return { ok: false, domains: [], message: 'Your DataForSEO account ran out of funds — top up at app.dataforseo.com, or paste publisher domains manually (free).' }
+  }
+
+  const depth = Math.min(Math.max(opts.depth ?? 20, 10), 50)
+  const res = await fetchWithTimeout(`${API}/v3/serp/google/organic/live/regular`, {
+    method: 'POST',
+    headers: { authorization: authHeader(cfg), 'content-type': 'application/json' },
+    body: JSON.stringify([{
+      keyword: seed,
+      location_name: opts.locationName || 'United States',
+      language_code: 'en',
+      depth,
+    }]),
+  }, 45_000)
+  if (!res) return { ok: false, domains: [], message: 'Could not reach api.dataforseo.com (network/timeout) — no credits were spent.' }
+
+  try {
+    const data = await res.json() as {
+      status_code?: number
+      status_message?: string
+      tasks?: Array<{
+        status_code?: number
+        status_message?: string
+        result?: Array<{ items?: Array<Record<string, unknown>> }>
+      }>
+    }
+    const rootCode = data.status_code ?? null
+    const taskCode = data.tasks?.[0]?.status_code ?? null
+    if (rootCode === 40100 || taskCode === 40100) return { ok: false, domains: [], message: 'Rejected (40100) — the DataForSEO API login/password is incorrect (app.dataforseo.com → API Access).' }
+    if (rootCode === 40202 || taskCode === 40202) return { ok: false, domains: [], message: 'Your DataForSEO account ran out of funds — top up at app.dataforseo.com, or paste publisher domains manually (free).' }
+    if (rootCode !== 20000 && rootCode !== 20100) {
+      return { ok: false, domains: [], message: `SERP lookup failed (status ${rootCode ?? res.status}: ${data.status_message || data.tasks?.[0]?.status_message || 'unknown'}).` }
+    }
+
+    const items = data.tasks?.[0]?.result?.[0]?.items
+    if (!Array.isArray(items) || items.length === 0) {
+      return { ok: false, domains: [], message: `No organic results for "${seed}" — try a broader niche keyword.` }
+    }
+
+    const byDomain = new Map<string, SerpDomain>()
+    for (const item of items) {
+      if (item.type !== 'organic') continue
+      const domain = typeof item.domain === 'string' ? item.domain.toLowerCase().replace(/^www\./, '') : ''
+      if (!domain) continue
+      const rank = typeof item.rank_absolute === 'number' ? item.rank_absolute : 100
+      const cur = byDomain.get(domain)
+      if (cur) {
+        cur.bestPosition = Math.min(cur.bestPosition, rank)
+        cur.results += 1
+      } else {
+        byDomain.set(domain, { domain, bestPosition: rank, results: 1 })
+      }
+    }
+    const domains = [...byDomain.values()].sort((a, b) => a.bestPosition - b.bestPosition)
+    return { ok: true, domains, message: `Live SERP for "${seed}" — ${domains.length} unique domains.` }
+  } catch {
+    return { ok: false, domains: [], message: `DataForSEO responded with HTTP ${res.status} — not confirmed.` }
+  }
+}
+
+// ------------------------------------------------------------
 // BULK KEYWORD METRICS — Labs "Bulk Search Volume" +
 // "Bulk Keyword Difficulty" endpoints. Fills the REAL Volume &
 // Difficulty columns for tracked GSC keywords in two cheap
