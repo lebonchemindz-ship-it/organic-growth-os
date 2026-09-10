@@ -126,6 +126,9 @@ function NavContent({ active, onNavigate }: { active: SectionId; onNavigate: (id
   )
 }
 
+const VALID_SECTION_IDS = new Set<string>(NAV.flatMap((g) => g.items.map((i) => i.id)))
+const BRAND_STORAGE_KEY = 'og:active-brand'
+
 export default function Home() {
   const [section, setSection] = useState<SectionId>('dashboard')
   const [brandSlug, setBrandSlug] = useState('holy_strips')
@@ -164,6 +167,37 @@ export default function Home() {
   const liveKeywords = dataStatus?.keywords?.live ?? 0
   const dfsVerified = dataStatus?.dataforseo?.verified ?? false
 
+  // Restore the window the user was on: the section lives in the URL hash
+  // (e.g. /#outreach), so a page refresh keeps the same view instead of
+  // falling back to Overview. Also reacts to hash changes in-session
+  // (pasting a shared link) — our own navigate() uses replaceState and
+  // never fires hashchange, so there is no feedback loop.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const applyHash = () => {
+      const hash = window.location.hash.replace(/^#\/?/, '')
+      if (hash && VALID_SECTION_IDS.has(hash)) setSection(hash as SectionId)
+    }
+    applyHash()
+    window.addEventListener('hashchange', applyHash)
+    return () => window.removeEventListener('hashchange', applyHash)
+  }, [])
+
+  // Restore the last active brand too (localStorage) — refresh keeps both
+  // the window and the brand context.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const stored = window.localStorage.getItem(BRAND_STORAGE_KEY)
+      if (stored) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time restore of persisted brand
+        setBrandSlug(stored)
+      }
+    } catch {
+      /* localStorage unavailable — keep the default brand */
+    }
+  }, [])
+
   // Porter OAuth return: /?porter=connected | ?porter=error&reason=…
   // Runs once on mount after a full page navigation (external system → state sync).
   useEffect(() => {
@@ -196,7 +230,9 @@ export default function Home() {
     params.delete('porter')
     params.delete('reason')
     const qs = params.toString()
-    window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}`)
+    // keep the hash in sync with the forced section so a refresh right after
+    // the OAuth return stays on Live Stats as well
+    window.history.replaceState({}, '', `${window.location.pathname}${qs ? `?${qs}` : ''}#live-stats`)
   }, [])
 
   const { data: brandsData } = useApiData<BrandsListData>('/api/brands')
@@ -206,6 +242,20 @@ export default function Home() {
     setSection(id)
     setMobileNavOpen(false)
     if (id !== 'live-stats') setPorterNotice(null)
+    // mirror the active section into the URL hash so a refresh (or a shared
+    // link) opens on the exact same window — never a silent reset to Overview
+    if (typeof window !== 'undefined') {
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}#${id}`)
+    }
+  }
+
+  function selectBrand(slug: string) {
+    setBrandSlug(slug)
+    try {
+      window.localStorage.setItem(BRAND_STORAGE_KEY, slug)
+    } catch {
+      /* persistence is best-effort */
+    }
   }
 
   const meta = SECTION_META[section]
@@ -376,7 +426,7 @@ export default function Home() {
             {section === 'ai' && <AiVisibilityView brandSlug={brandSlug} />}
             {section === 'approvals' && <ApprovalsView brandSlug={brandSlug} />}
             {section === 'reports' && <ReportsView brandSlug={brandSlug} />}
-            {section === 'brands' && <BrandsView activeSlug={brandSlug} onSelect={setBrandSlug} />}
+            {section === 'brands' && <BrandsView activeSlug={brandSlug} onSelect={selectBrand} />}
             {section === 'integrations' && <IntegrationsView />}
             {section === 'master' && <MasterPromptView />}
             {section === 'apis' && <ApisView onNavigate={navigate} />}
