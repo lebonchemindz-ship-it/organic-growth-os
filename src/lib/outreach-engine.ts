@@ -167,7 +167,9 @@ export async function discoverPublishers(
     }
 
     // --- deterministic qualification score (0-100) ---
-    let score = 30 // topically relevant (found via niche SERP or owner-provided)
+    // base 35: topically relevant by construction (SERP-ranked for the
+    // niche, or deliberately pasted by the owner)
+    let score = 35
     if (c.bestPosition !== null) {
       if (c.bestPosition <= 10) score += 15
       else if (c.bestPosition <= 30) score += 8
@@ -551,4 +553,21 @@ export async function markCampaignReplied(campaignId: string, brandId: string): 
   })
   await db.publisher.update({ where: { id: campaign.publisherId }, data: { status: 'REPLIED' } })
   return { ok: true, message: 'Marked as replied — the sequence stops automatically (no more follow-ups for this publisher).' }
+}
+
+// ------------------------------------------------------------
+// remove an unwanted prospect (never one already contacted)
+// ------------------------------------------------------------
+
+export async function deletePublisher(publisherId: string, brandId: string): Promise<{ ok: boolean; message: string }> {
+  const publisher = await db.publisher.findFirst({
+    where: { id: publisherId, brandId },
+    include: { outreach: { select: { status: true } } },
+  })
+  if (!publisher) return { ok: false, message: 'Publisher not found.' }
+  if (publisher.outreach.length > 0) {
+    return { ok: false, message: 'This publisher already has outreach history — mark it DO_NOT_CONTACT instead of deleting (the ledger stays honest).' }
+  }
+  await db.publisher.delete({ where: { id: publisher.id } })
+  return { ok: true, message: `${publisher.name} (${publisher.domain}) removed from the pipeline.` }
 }

@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Progress } from '@/components/ui/progress'
-import { Mail, Users, Link2, ShieldCheck, TrendingUp, Search, Send, RefreshCw, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { Mail, Users, Link2, ShieldCheck, TrendingUp, Search, Send, RefreshCw, CheckCircle2, AlertTriangle, Trash2 } from 'lucide-react'
 import {
   useApiData, StatusBadge, LoadingGrid, ErrorBox, SectionHeader, KpiCard, fmtNum, fmtDate, humanize,
 } from './shared'
@@ -37,7 +37,7 @@ interface Campaign {
   status: string
   result: string
   sentAt: string | null
-  publisher: { name: string; domain: string }
+  publisher: { id: string; name: string; domain: string }
 }
 
 interface Backlink {
@@ -217,11 +217,24 @@ export function OutreachView({ brandSlug }: { brandSlug: string }) {
     }
   }
 
+  const removePublisher = async (publisherId: string) => {
+    setBusyPublisher(publisherId)
+    setActionMessage(null)
+    try {
+      const out = await post({ action: 'delete-publisher', publisherId })
+      setActionMessage(out?.message || 'Done.')
+      refetch()
+    } finally {
+      setBusyPublisher(null)
+    }
+  }
+
   if (error) return <ErrorBox message={error} />
   if (loading || !data) return <LoadingGrid rows={6} />
 
   const s = data.summary
   const engine = data.engine
+  const publisherIdsWithCampaign = new Set(data.campaigns.map((c) => c.publisher.id))
   const qualifiedWithoutCampaign = data.publishers.filter(
     (p) => p.qualificationScore >= 70 && p.contactEmail && !['CONTACTED', 'REPLIED', 'NEGOTIATING', 'PLACED', 'DO_NOT_CONTACT'].includes(p.status),
   )
@@ -442,6 +455,16 @@ export function OutreachView({ brandSlug }: { brandSlug: string }) {
                     >
                       <Send className="mr-1.5 h-3 w-3" />
                       {busyPublisher === p.id ? 'Sending…' : 'Start outreach'}
+                    </Button>
+                  )}
+                  {!publisherIdsWithCampaign.has(p.id) && (
+                    <Button
+                      size="sm" variant="ghost" className="mt-3 ml-2 h-7 px-2 text-xs text-muted-foreground"
+                      onClick={() => removePublisher(p.id)}
+                      disabled={busyPublisher === p.id}
+                      title="Remove this prospect from the pipeline"
+                    >
+                      <Trash2 className="h-3 w-3" />
                     </Button>
                   )}
                 </CardContent>

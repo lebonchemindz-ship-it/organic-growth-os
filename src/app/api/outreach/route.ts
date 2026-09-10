@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { ensureSeeded } from '@/lib/ensure-seed'
 import { hunterReady } from '@/lib/hunter'
 import { smtpReady } from '@/lib/email-sender'
-import { discoverPublishers, launchOutreach, sendDueFollowups, markCampaignReplied } from '@/lib/outreach-engine'
+import { discoverPublishers, launchOutreach, sendDueFollowups, markCampaignReplied, deletePublisher } from '@/lib/outreach-engine'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -129,6 +129,13 @@ export async function POST(req: NextRequest) {
       const campaignId = String(body.campaignId || '')
       if (!campaignId) return NextResponse.json({ ok: false, message: 'campaignId required.' }, { status: 400 })
       const result = await markCampaignReplied(campaignId, brand.id)
+      return NextResponse.json(result, { status: result.ok ? 200 : 400 })
+    }
+
+    if (action === 'delete-publisher') {
+      const publisherId = String(body.publisherId || '')
+      if (!publisherId) return NextResponse.json({ ok: false, message: 'publisherId required.' }, { status: 400 })
+      const result = await deletePublisher(publisherId, brand.id)
       return NextResponse.json(result, { status: result.ok ? 200 : 400 })
     }
 
